@@ -130,3 +130,15 @@ for OPTION in "${OPTIONS[@]}"; do
 done
 
 echo "扩容完成！新镜像: $RESIZED_NAME"
+
+# 重命名扩容后的镜像文件
+FINAL_NAME="final_${ORIGINAL_NAME}"
+mv "$RESIZED_NAME" "$FINAL_NAME"
+echo "重命名扩容后的镜像为: $FINAL_NAME"
+
+# 删除多余文件，只保留扩容后的镜像
+echo "清理多余文件..."
+rm -f "$ORIGINAL_NAME"
+rm -rf extracted
+
+echo "仅保留扩容后的镜像: $FINAL_NAME"
