@@ -25,6 +25,7 @@ jobs:
       - name: 计算文件名称
         run: |
           echo "FILENAME=$(basename "${{ github.event.inputs.image_url }}")" >> $GITHUB_ENV
+          echo "FINAL_FILENAME=final_$(basename "${{ github.event.inputs.image_url }}")" >> $GITHUB_ENV
 
       - name: 执行磁盘扩容
         run: |
@@ -32,13 +33,13 @@ jobs:
           sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}"
 
           ls -lah  # 列出所有文件，检查扩容结果
-          if [ ! -f "$FILENAME" ]; then
-            echo "错误：扩容后的文件 $FILENAME 未找到！"
+          if [ ! -f "$FINAL_FILENAME" ]; then
+            echo "错误：扩容后的文件 $FINAL_FILENAME 未找到！"
             exit 1
           fi
 
       - name: 上传扩容后的镜像
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.FILENAME }}
-          path: ${{ env.FILENAME }}
+          name: ${{ env.FINAL_FILENAME }}
+          path: ${{ env.FINAL_FILENAME }}
