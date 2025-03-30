@@ -9,6 +9,9 @@ on:
       expand_options:
         description: '扩容选项 (例如: /dev/sda1 1G,/dev/sda2 200M)'
         required: true
+      output_filename:
+        description: '输出文件名 (例如: expanded_image.qcow2)'
+        required: true
 
 jobs:
   resize:
@@ -22,24 +25,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y qemu-utils libguestfs-tools guestfsd supermin
 
-      - name: 计算文件名称
-        run: |
-          echo "FILENAME=$(basename "${{ github.event.inputs.image_url }}")" >> $GITHUB_ENV
-          echo "FINAL_FILENAME=final_$(basename "${{ github.event.inputs.image_url }}")" >> $GITHUB_ENV
-
       - name: 执行磁盘扩容
         run: |
           chmod +x ./resize_disk.sh
-          sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}"
+          sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}" "${{ github.event.inputs.output_filename }}"
 
           ls -lah  # 列出所有文件，检查扩容结果
-          if [ ! -f "$FINAL_FILENAME" ]; then
-            echo "错误：扩容后的文件 $FINAL_FILENAME 未找到！"
+          if [ ! -f "${{ github.event.inputs.output_filename }}" ]; then
+            echo "错误：扩容后的文件 ${{ github.event.inputs.output_filename }} 未找到！"
             exit 1
           fi
 
       - name: 上传扩容后的镜像
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.FINAL_FILENAME }}
-          path: ${{ env.FINAL_FILENAME }}
+          name: ${{ github.event.inputs.output_filename }}
+          path: ${{ github.event.inputs.output_filename }}
