@@ -22,14 +22,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y qemu-utils libguestfs-tools guestfsd supermin
 
+      - name: 计算文件名称
+        run: |
+          echo "FILENAME=$(basename "${{ github.event.inputs.image_url }}")" >> $GITHUB_ENV
+
       - name: 执行磁盘扩容
         run: |
-          export LIBGUESTFS_DEBUG=1 LIBGUESTFS_TRACE=1
           chmod +x ./resize_disk.sh
           sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}"
+
+          ls -lah  # 列出所有文件，检查扩容结果
+          if [ ! -f "$FILENAME" ]; then
+            echo "错误：扩容后的文件 $FILENAME 未找到！"
+            exit 1
+          fi
 
       - name: 上传扩容后的镜像
         uses: actions/upload-artifact@v4
         with:
-          name: $(basename "${{ github.event.inputs.image_url }}")  # 使用原始镜像名称
-          path: $(basename "${{ github.event.inputs.image_url }}")  # 使用原始镜像名称
+          name: ${{ env.FILENAME }}
+          path: ${{ env.FILENAME }}
