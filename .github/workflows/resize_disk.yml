@@ -20,12 +20,13 @@ jobs:
       - name: 安装依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-utils libguestfs-tools guestfsd supermin
+          sudo apt-get install -y qemu-utils libguestfs-tools guestfsd supermin glibc
 
       - name: 执行磁盘扩容
         run: |
+          export LIBGUESTFS_DEBUG=1 LIBGUESTFS_TRACE=1
           chmod +x ./resize_disk.sh
-          ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}"
+          sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}"
 
       - name: 上传扩容后的镜像
         uses: actions/upload-artifact@v4
