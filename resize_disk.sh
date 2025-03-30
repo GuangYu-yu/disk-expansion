@@ -4,10 +4,16 @@ set -e
 # 获取参数
 IMAGE_URL=$1
 EXPAND_OPTIONS=$2
+OUTPUT_FILENAME=$3  # 新增：输出文件名参数
 
 if [ -z "$IMAGE_URL" ] || [ -z "$EXPAND_OPTIONS" ]; then
-  echo "用法: $0 <镜像URL> <扩容选项，例如/dev/sda1 1G,/dev/sda2 200M>"
+  echo "用法: $0 <镜像URL> <扩容选项，例如/dev/sda1 1G,/dev/sda2 200M> [输出文件名]"
   exit 1
+fi
+
+# 如果未提供输出文件名，使用默认名称
+if [ -z "$OUTPUT_FILENAME" ]; then
+  OUTPUT_FILENAME="expanded_image.qcow2"
 fi
 
 # 下载原始镜像
@@ -131,14 +137,6 @@ done
 
 echo "扩容完成！新镜像: $RESIZED_NAME"
 
-# 重命名扩容后的镜像文件
-FINAL_NAME="final_${ORIGINAL_NAME}"
-mv "$RESIZED_NAME" "$FINAL_NAME"
-echo "重命名扩容后的镜像为: $FINAL_NAME"
-
-# 删除多余文件，只保留扩容后的镜像
-echo "清理多余文件..."
-rm -f "$ORIGINAL_NAME"
-rm -rf extracted
-
-echo "仅保留扩容后的镜像: $FINAL_NAME"
+# 重命名扩容后的镜像文件为用户指定的名称
+mv "$RESIZED_NAME" "$OUTPUT_FILENAME"
+echo "重命名扩容后的镜像为: $OUTPUT_FILENAME"
