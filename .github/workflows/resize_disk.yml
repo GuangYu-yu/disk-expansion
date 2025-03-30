@@ -1,0 +1,34 @@
+name: 磁盘扩容工具
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_url:
+        description: '原始磁盘镜像URL'
+        required: true
+      expand_options:
+        description: '扩容选项 (例如: /dev/sda1 1G,/dev/sda2 200M)'
+        required: true
+
+jobs:
+  resize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v3
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-utils libguestfs-tools
+
+      - name: 执行磁盘扩容
+        run: |
+          chmod +x ./resize_disk.sh
+          ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}"
+
+      - name: 上传扩容后的镜像
+        uses: actions/upload-artifact@v4
+        with:
+          name: $(basename "${{ github.event.inputs.image_url }}")  # 使用原始镜像名称
+          path: $(basename "${{ github.event.inputs.image_url }}")  # 使用原始镜像名称
