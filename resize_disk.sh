@@ -192,14 +192,18 @@ else
     
     # 如果分区为空（即只指定了大小），找到最大的分区
     if [ -z "$PARTITION" ]; then
-      echo "未指定分区，查找镜像中的分区..."
-      # 使用virt-filesystems获取镜像中的分区信息
-      PARTITION=$(virt-filesystems --partitions --long -a "$ORIGINAL_NAME" | sort -k3 -h | tail -n1 | awk '{print $1}')
+      echo "未指定分区，查找镜像中的最大分区..."
+      # 打印完整的分区表格，便于在GitHub日志中查看
+      echo "镜像中的分区信息表格:"
+      virt-filesystems -a "$ORIGINAL_NAME" -l
+      
+      # 使用virt-filesystems获取镜像中的分区信息，并提取最大分区
+      PARTITION=$(virt-filesystems -a "$ORIGINAL_NAME" -l | awk 'NR>1 {print $1, $5}' | sort -k2 -n | tail -n1 | awk '{print $1}')
       if [ -z "$PARTITION" ]; then
         echo "错误：无法在镜像中找到分区。请手动指定分区。"
         exit 1
       fi
-      echo "找到镜像中的分区: $PARTITION"
+      echo "找到镜像中的最大分区: $PARTITION"
     fi
     
     echo "正在扩展分区 $PARTITION 到大小 $SIZE..."
