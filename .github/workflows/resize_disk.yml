@@ -7,7 +7,7 @@ on:
         description: '原始磁盘镜像URL'
         required: true
       expand_options:
-        description: '扩容选项 (例如: /dev/sda1 1G,/dev/sda2 200M)'
+        description: '示例：/dev/sda1 1G,/dev/sda2 200M 或者 2G （只指定大小会默认选择最大分区）'
         required: true
       output_filename:
         description: '输出文件名 (例如: expanded_image.qcow2)'
@@ -23,7 +23,7 @@ jobs:
       - name: 安装依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-utils libguestfs-tools guestfsd supermin
+          sudo apt-get install -y qemu-utils libguestfs-tools guestfsd supermin p7zip-full
 
       - name: 执行磁盘扩容
         run: |
@@ -31,13 +31,13 @@ jobs:
           sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}" "${{ github.event.inputs.output_filename }}"
 
           ls -lah  # 列出所有文件，检查扩容结果
-          if [ ! -f "${{ github.event.inputs.output_filename }}" ]; then
-            echo "错误：扩容后的文件 ${{ github.event.inputs.output_filename }} 未找到！"
+          if [ ! -f "${{ github.event.inputs.output_filename }}.7z" ]; then
+            echo "错误：压缩后的文件 ${{ github.event.inputs.output_filename }}.7z 未找到！"
             exit 1
           fi
 
-      - name: 上传扩容后的镜像
+      - name: 上传扩容并压缩后的镜像
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event.inputs.output_filename }}
-          path: ${{ github.event.inputs.output_filename }}
+          name: ${{ github.event.inputs.output_filename }}.7z
+          path: ${{ github.event.inputs.output_filename }}.7z
