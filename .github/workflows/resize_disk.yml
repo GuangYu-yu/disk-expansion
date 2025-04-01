@@ -28,7 +28,7 @@ jobs:
       - name: 执行磁盘扩容
         run: |
           chmod +x ./resize_disk.sh
-          sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}" "${{ github.event.inputs.output_filename }}"
+          sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}" "${{ github.event.inputs.output_filename }}" "compress"
 
           ls -lah  # 列出所有文件，检查扩容结果
           if [ ! -f "${{ github.event.inputs.output_filename }}.7z" ]; then
