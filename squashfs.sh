@@ -43,63 +43,63 @@ EXTRACTED_FILE=""
 case "$FILE_TYPE" in
   application/gzip)
     echo "检测到 gzip 压缩，解压中..."
-    gunzip -k "$ORIGINAL_NAME"
+    gunzip -k "$ORIGINAL_NAME" || true  # 忽略解压缩时的警告
     EXTRACTED_FILE="${ORIGINAL_NAME%.gz}"
     ;;
   application/x-bzip2)
     echo "检测到 bzip2 压缩，解压中..."
-    bzip2 -dk "$ORIGINAL_NAME"
+    bzip2 -dk "$ORIGINAL_NAME" || true
     EXTRACTED_FILE="${ORIGINAL_NAME%.bz2}"
     ;;
   application/x-xz)
     echo "检测到 xz 压缩，解压中..."
-    xz -dk "$ORIGINAL_NAME"
+    xz -dk "$ORIGINAL_NAME" || true
     EXTRACTED_FILE="${ORIGINAL_NAME%.xz}"
     ;;
   application/x-7z-compressed)
     echo "检测到 7z 压缩，解压中..."
-    7z x "$ORIGINAL_NAME" -oextracted
+    7z x "$ORIGINAL_NAME" -oextracted || true
     EXTRACTED_FILE=$(find extracted -type f | head -n 1)
     ;;
   application/x-tar)
     echo "检测到 tar 压缩，解压中..."
-    tar -xf "$ORIGINAL_NAME" -C extracted
+    tar -xf "$ORIGINAL_NAME" -C extracted || true
     EXTRACTED_FILE=$(find extracted -type f | head -n 1)
     ;;
   application/zip)
     echo "检测到 zip 压缩，解压中..."
-    unzip "$ORIGINAL_NAME" -d extracted
+    unzip "$ORIGINAL_NAME" -d extracted || true
     EXTRACTED_FILE=$(find extracted -type f | head -n 1)
     ;;
   *)
     echo "未识别的文件类型，尝试按扩展名处理..."
     if [[ "$ORIGINAL_NAME" == *.gz ]]; then
       echo "按 .gz 处理..."
-      gunzip -k "$ORIGINAL_NAME"
+      gunzip -k "$ORIGINAL_NAME" || true  # 忽略解压缩时的警告
       EXTRACTED_FILE="${ORIGINAL_NAME%.gz}"
     elif [[ "$ORIGINAL_NAME" == *.bz2 ]]; then
       echo "按 .bz2 处理..."
-      bzip2 -dk "$ORIGINAL_NAME"
+      bzip2 -dk "$ORIGINAL_NAME" || true
       EXTRACTED_FILE="${ORIGINAL_NAME%.bz2}"
     elif [[ "$ORIGINAL_NAME" == *.xz ]]; then
       echo "按 .xz 处理..."
-      xz -dk "$ORIGINAL_NAME"
+      xz -dk "$ORIGINAL_NAME" || true
       EXTRACTED_FILE="${ORIGINAL_NAME%.xz}"
     elif [[ "$ORIGINAL_NAME" == *.tar.gz || "$ORIGINAL_NAME" == *.tgz ]]; then
       echo "按 .tar.gz 处理..."
-      tar -xzf "$ORIGINAL_NAME" -C extracted
+      tar -xzf "$ORIGINAL_NAME" -C extracted || true
       EXTRACTED_FILE=$(find extracted -type f | head -n 1)
     elif [[ "$ORIGINAL_NAME" == *.tar.bz2 || "$ORIGINAL_NAME" == *.tbz2 ]]; then
       echo "按 .tar.bz2 处理..."
-      tar -xjf "$ORIGINAL_NAME" -C extracted
+      tar -xjf "$ORIGINAL_NAME" -C extracted || true
       EXTRACTED_FILE=$(find extracted -type f | head -n 1)
     elif [[ "$ORIGINAL_NAME" == *.tar.xz || "$ORIGINAL_NAME" == *.txz ]]; then
       echo "按 .tar.xz 处理..."
-      tar -xJf "$ORIGINAL_NAME" -C extracted
+      tar -xJf "$ORIGINAL_NAME" -C extracted || true
       EXTRACTED_FILE=$(find extracted -type f | head -n 1)
     elif [[ "$ORIGINAL_NAME" == *.zip ]]; then
       echo "按 .zip 处理..."
-      unzip "$ORIGINAL_NAME" -d extracted
+      unzip "$ORIGINAL_NAME" -d extracted || true
       EXTRACTED_FILE=$(find extracted -type f | head -n 1)
     else
       echo "无法解压，文件可能未被压缩。"
