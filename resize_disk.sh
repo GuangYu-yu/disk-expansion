@@ -180,10 +180,17 @@ if [ "$TOTAL_EXPAND_SIZE" -eq 0 ]; then
   qemu-img convert -O "$OUTPUT_FORMAT" "$ORIGINAL_NAME" "$OUTPUT_FILENAME"
   echo "格式转换完成！"
 else
+  # 获取原始镜像大小
+  ORIGINAL_SIZE=$(qemu-img info --output=json "$ORIGINAL_NAME" | jq -r '.virtual-size')
+  ORIGINAL_SIZE_MB=$(echo "$ORIGINAL_SIZE / 1024 / 1024" | bc)
+  
+  # 计算新镜像总大小（原始大小 + 扩容大小）
+  TOTAL_SIZE=$(echo "$ORIGINAL_SIZE_MB + $TOTAL_EXPAND_SIZE" | bc)
+  
   # 创建新的扩容后的磁盘镜像
   RESIZED_NAME="resized_${ORIGINAL_NAME}"
-  echo "创建新的磁盘镜像，大小为 ${TOTAL_EXPAND_SIZE}M..."
-  qemu-img create -f "$FORMAT" "$RESIZED_NAME" "${TOTAL_EXPAND_SIZE}M"
+  echo "创建新的磁盘镜像，大小为 ${TOTAL_SIZE}M（原始 ${ORIGINAL_SIZE_MB}M + 扩容 ${TOTAL_EXPAND_SIZE}M）..."
+  qemu-img create -f "$FORMAT" "$RESIZED_NAME" "${TOTAL_SIZE}M"
 
   # 使用之前解析好的选项进行扩容
   for i in "${!PARSED_OPTIONS[@]}"; do
@@ -213,7 +220,7 @@ else
   echo "扩容完成！新镜像: $RESIZED_NAME"
 
   # 如果输出格式与当前格式不同，则进行转换
-  if [[ "$OUTPUT_FORMAT" != "raw" && "$OUTPUT_FORMAT" != "$FORMAT" ]]; then
+  if [[ "$OUTPUT_FORMAT" != "$FORMAT" ]]; then
     echo "转换扩容后的镜像为 $OUTPUT_FORMAT 格式..."
     qemu-img convert -O "$OUTPUT_FORMAT" "$RESIZED_NAME" "$OUTPUT_FILENAME"
     rm "$RESIZED_NAME"  # 删除中间文件
