@@ -5,6 +5,7 @@ set -e
 IMAGE_SOURCE=$1
 EXPAND_OPTIONS=$2
 OUTPUT_FILENAME=$3
+COMPRESS_COMMAND=$4
 
 if [ -z "$IMAGE_SOURCE" ] || [ -z "$EXPAND_OPTIONS" ] || [ -z "$OUTPUT_FILENAME" ]; then
   echo "用法: $0 <镜像URL或本地文件路径> <扩容选项，例如/dev/sda1 1G,/dev/sda2 200M 或者 2G> [输出文件名]"
@@ -188,9 +189,9 @@ fi
 
 echo "重命名扩容后的镜像为: $OUTPUT_FILENAME"
 
-# 只有在 GitHub Actions 环境中才压缩文件
-if [ -n "$GITHUB_ACTIONS" ]; then
-  echo "检测到 GitHub Actions 环境，压缩最终文件..."
+# 只有在传递了压缩命令时才压缩文件
+if [ "$COMPRESS_COMMAND" == "compress" ]; then
+  echo "压缩最终文件..."
   7z a -mx=9 "${OUTPUT_FILENAME}.7z" "$OUTPUT_FILENAME"
   echo "压缩完成"
 else
