@@ -119,13 +119,17 @@ ORIGINAL_NAME="$EXTRACTED_FILE"
 echo "解压完成，使用文件: $ORIGINAL_NAME"
 
 # 检测解压后的文件格式
-FORMAT=$(qemu-img info --output=json "$ORIGINAL_NAME" | jq -r '.format')
+echo "检查文件格式..."
+# 使用文本解析方式获取格式
+FORMAT=$(qemu-img info "$ORIGINAL_NAME" | grep "file format" | awk '{print $3}')
+echo "检测到文件格式: $FORMAT"
 
 # 如果格式不是 raw 或 qcow2，则转换为 raw 格式
 if [[ "$FORMAT" != "raw" && "$FORMAT" != "qcow2" ]]; then
   echo "转换 $FORMAT 到 raw 格式..."
   qemu-img convert -O raw "$ORIGINAL_NAME" "${ORIGINAL_NAME}.img"
   ORIGINAL_NAME="${ORIGINAL_NAME}.img"
+  FORMAT="raw"
 fi
 
 # 计算新的磁盘大小
@@ -180,8 +184,9 @@ if [ "$TOTAL_EXPAND_SIZE" -eq 0 ]; then
   qemu-img convert -O "$OUTPUT_FORMAT" "$ORIGINAL_NAME" "$OUTPUT_FILENAME"
   echo "格式转换完成！"
 else
-  # 获取原始镜像大小
-  ORIGINAL_SIZE=$(qemu-img info --output=json "$ORIGINAL_NAME" | jq -r '.virtual-size')
+  # 使用文本解析方式获取大小
+  ORIGINAL_SIZE=$(qemu-img info "$ORIGINAL_NAME" | grep "virtual size" | sed -E 's/.*\(([0-9]+) bytes\).*/\1/')
+  echo "检测到镜像大小: $ORIGINAL_SIZE 字节"
   ORIGINAL_SIZE_MB=$(echo "$ORIGINAL_SIZE / 1024 / 1024" | bc)
   
   # 计算新镜像总大小（原始大小 + 扩容大小）
