@@ -1,0 +1,43 @@
+name: SquashFS 磁盘扩容工具
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_url:
+        description: '原始镜像 URL'
+        required: true
+      expand_options:
+        description: '示例：/dev/sda1 1G,/dev/sda2 200M 或者 2G （只指定大小会默认选择最大分区）'
+        required: true
+      output_filename:
+        description: '输出文件名 (例如: expanded_image.img)'
+        required: true
+
+jobs:
+  resize_squashfs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v3
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-utils libguestfs-tools guestfsd supermin p7zip-full jq squashfs-tools parted
+
+      - name: 执行 SquashFS 磁盘扩容
+        run: |
+          chmod +x ./squashfs.sh
+          sudo ./squashfs.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}" "${{ github.event.inputs.output_filename }}" "compress"
+
+          ls -lah  # 列出所有文件，检查扩容结果
+          if [ ! -f "${{ github.event.inputs.output_filename }}.7z" ]; then
+            echo "错误：压缩后的文件 ${{ github.event.inputs.output_filename }}.7z 未找到！"
+            exit 1
+          fi
+
+      - name: 上传扩容并压缩后的镜像
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.output_filename }}.7z
+          path: ${{ github.event.inputs.output_filename }}.7z
