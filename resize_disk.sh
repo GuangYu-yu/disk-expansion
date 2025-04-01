@@ -206,7 +206,7 @@ else
       echo "找到镜像中的最大分区: $PARTITION"
     fi
     
-    echo "正在扩展分区 $PARTITION 到大小 $SIZE..."
+    echo "正在将分区 $PARTITION 增加 $SIZE..."
     virt-resize --expand "$PARTITION" "$ORIGINAL_NAME" "$RESIZED_NAME"
   done
 
