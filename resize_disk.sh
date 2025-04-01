@@ -130,9 +130,34 @@ fi
 
 # 计算新的磁盘大小
 TOTAL_EXPAND_SIZE=0
-IFS=',' read -ra OPTIONS <<< "$EXPAND_OPTIONS"  # 解析扩容选项
-for OPTION in "${OPTIONS[@]}"; do
-  SIZE=$(echo "$OPTION" | awk '{print $2}')
+declare -a PARSED_OPTIONS
+declare -a PARSED_PARTITIONS
+declare -a PARSED_SIZES
+
+# 首先判断整个EXPAND_OPTIONS是否只是一个简单的大小值
+if [[ "$EXPAND_OPTIONS" =~ ^[0-9]+[GM]$ ]]; then
+  # 如果是单纯的大小值，直接使用
+  PARSED_OPTIONS=("$EXPAND_OPTIONS")
+else
+  # 否则按逗号分隔解析
+  IFS=',' read -ra PARSED_OPTIONS <<< "$EXPAND_OPTIONS"
+fi
+
+for OPTION in "${PARSED_OPTIONS[@]}"; do
+  # 检查每个选项是否只有一个值（纯大小格式，如"8G"）
+  if [[ "$OPTION" =~ ^[0-9]+[GM]$ ]]; then
+    SIZE="$OPTION"
+    # 暂时不确定分区，后面再处理
+    PARTITION=""
+  else
+    PARTITION=$(echo "$OPTION" | awk '{print $1}')
+    SIZE=$(echo "$OPTION" | awk '{print $2}')
+  fi
+  
+  # 保存解析结果
+  PARSED_PARTITIONS+=("$PARTITION")
+  PARSED_SIZES+=("$SIZE")
+  
   UNIT=${SIZE: -1}
   VALUE=${SIZE%?}
   if [[ "$UNIT" == "G" ]]; then
@@ -160,17 +185,18 @@ else
   echo "创建新的磁盘镜像，大小为 ${TOTAL_EXPAND_SIZE}M..."
   qemu-img create -f "$FORMAT" "$RESIZED_NAME" "${TOTAL_EXPAND_SIZE}M"
 
-  # 解析扩容选项并进行扩容
-  IFS=',' read -ra OPTIONS <<< "$EXPAND_OPTIONS"
-  for OPTION in "${OPTIONS[@]}"; do
-    if [[ "$OPTION" =~ ^[0-9]+[GM]$ ]]; then
-      # 如果选项是一个大小而不是分区，找到最大的分区
+  # 使用之前解析好的选项进行扩容
+  for i in "${!PARSED_OPTIONS[@]}"; do
+    PARTITION="${PARSED_PARTITIONS[$i]}"
+    SIZE="${PARSED_SIZES[$i]}"
+    
+    # 如果分区为空（即只指定了大小），找到最大的分区
+    if [ -z "$PARTITION" ]; then
+      echo "未指定分区，查找最大分区..."
       PARTITION=$(lsblk -nr -o NAME,SIZE | sort -k2 -h | tail -n1 | awk '{print $1}')
-      SIZE="$OPTION"
-    else
-      PARTITION=$(echo "$OPTION" | awk '{print $1}')
-      SIZE=$(echo "$OPTION" | awk '{print $2}')
+      echo "找到最大分区: $PARTITION"
     fi
+    
     echo "正在扩展分区 $PARTITION 到大小 $SIZE..."
     virt-resize --expand "$PARTITION" "$ORIGINAL_NAME" "$RESIZED_NAME"
   done
