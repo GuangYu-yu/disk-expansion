@@ -6,7 +6,8 @@ IMAGE_SOURCE=$1
 EXPAND_OPTIONS=$2
 OUTPUT_FILENAME=$3
 PARTITION_NUMBER=$4
-COMPRESS_COMMAND=$5
+IS_EFI=$5
+COMPRESS_COMMAND=$6
 
 if [ -z "$IMAGE_SOURCE" ] || [ -z "$EXPAND_OPTIONS" ] || [ -z "$OUTPUT_FILENAME" ]; then
   echo "用法: $0 <镜像URL或本地文件路径> <扩容选项，例如 200M 或者 2G> <输出文件名> [分区号，默认2] [compress]"
@@ -180,8 +181,14 @@ else
   parted $ORIGINAL_NAME print
   
   echo "调整分区 $PARTITION_NUMBER 大小..."
-  # 使用传入的分区号
-  parted $ORIGINAL_NAME resizepart $PARTITION_NUMBER 100%
+  # 在parted部分根据IS_EFI参数处理不同情况
+  if [ "$IS_EFI" = "带EFI" ]; then
+    # 对于EFI镜像，使用echo提供自动回答
+    echo -e "ok\nFix\n" | parted $ORIGINAL_NAME resizepart $PARTITION_NUMBER 100%
+  else
+    # 对于非EFI镜像
+    parted $ORIGINAL_NAME resizepart $PARTITION_NUMBER 100%
+  fi
 
   # 如果输出格式与当前格式不同，则进行转换
   if [[ "$OUTPUT_FORMAT" != "$FORMAT" ]]; then
