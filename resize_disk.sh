@@ -51,64 +51,71 @@ EXTRACTED_FILE=""
 case "$FILE_TYPE" in
   application/gzip)
     echo "检测到 gzip 压缩，解压中..."
-    gunzip -k "$ORIGINAL_NAME" || true  # 忽略解压缩时的警告
+    gunzip "$ORIGINAL_NAME" || true  # 忽略解压缩时的警告
     EXTRACTED_FILE="${ORIGINAL_NAME%.gz}"
     ;;
   application/x-bzip2)
     echo "检测到 bzip2 压缩，解压中..."
-    bzip2 -dk "$ORIGINAL_NAME" || true
+    bzip2 -d "$ORIGINAL_NAME" || true
     EXTRACTED_FILE="${ORIGINAL_NAME%.bz2}"
     ;;
   application/x-xz)
     echo "检测到 xz 压缩，解压中..."
-    xz -dk "$ORIGINAL_NAME" || true
+    xz -d "$ORIGINAL_NAME" || true
     EXTRACTED_FILE="${ORIGINAL_NAME%.xz}"
     ;;
   application/x-7z-compressed)
     echo "检测到 7z 压缩，解压中..."
-    7z x "$ORIGINAL_NAME" -oextracted || true
+    7z e "$ORIGINAL_NAME" -oextracted || true
     EXTRACTED_FILE=$(find extracted -type f | head -n 1)
+    rm -f "$ORIGINAL_NAME"
     ;;
   application/x-tar)
     echo "检测到 tar 压缩，解压中..."
     tar -xf "$ORIGINAL_NAME" -C extracted || true
     EXTRACTED_FILE=$(find extracted -type f | head -n 1)
+    rm -f "$ORIGINAL_NAME"
     ;;
   application/zip)
     echo "检测到 zip 压缩，解压中..."
     unzip "$ORIGINAL_NAME" -d extracted || true
     EXTRACTED_FILE=$(find extracted -type f | head -n 1)
+    rm -f "$ORIGINAL_NAME"
     ;;
   *)
     echo "未识别的文件类型，尝试按扩展名处理..."
     if [[ "$ORIGINAL_NAME" == *.gz ]]; then
       echo "按 .gz 处理..."
-      gunzip -k "$ORIGINAL_NAME" || true  # 忽略解压缩时的警告
+      gunzip "$ORIGINAL_NAME" || true
       EXTRACTED_FILE="${ORIGINAL_NAME%.gz}"
     elif [[ "$ORIGINAL_NAME" == *.bz2 ]]; then
       echo "按 .bz2 处理..."
-      bzip2 -dk "$ORIGINAL_NAME" || true
+      bzip2 -d "$ORIGINAL_NAME" || true
       EXTRACTED_FILE="${ORIGINAL_NAME%.bz2}"
     elif [[ "$ORIGINAL_NAME" == *.xz ]]; then
       echo "按 .xz 处理..."
-      xz -dk "$ORIGINAL_NAME" || true
+      xz -d "$ORIGINAL_NAME" || true
       EXTRACTED_FILE="${ORIGINAL_NAME%.xz}"
     elif [[ "$ORIGINAL_NAME" == *.tar.gz || "$ORIGINAL_NAME" == *.tgz ]]; then
       echo "按 .tar.gz 处理..."
       tar -xzf "$ORIGINAL_NAME" -C extracted || true
       EXTRACTED_FILE=$(find extracted -type f | head -n 1)
+      rm -f "$ORIGINAL_NAME"
     elif [[ "$ORIGINAL_NAME" == *.tar.bz2 || "$ORIGINAL_NAME" == *.tbz2 ]]; then
       echo "按 .tar.bz2 处理..."
       tar -xjf "$ORIGINAL_NAME" -C extracted || true
       EXTRACTED_FILE=$(find extracted -type f | head -n 1)
+      rm -f "$ORIGINAL_NAME"
     elif [[ "$ORIGINAL_NAME" == *.tar.xz || "$ORIGINAL_NAME" == *.txz ]]; then
       echo "按 .tar.xz 处理..."
       tar -xJf "$ORIGINAL_NAME" -C extracted || true
       EXTRACTED_FILE=$(find extracted -type f | head -n 1)
+      rm -f "$ORIGINAL_NAME"
     elif [[ "$ORIGINAL_NAME" == *.zip ]]; then
       echo "按 .zip 处理..."
       unzip "$ORIGINAL_NAME" -d extracted || true
       EXTRACTED_FILE=$(find extracted -type f | head -n 1)
+      rm -f "$ORIGINAL_NAME"
     else
       echo "无法解压，文件可能未被压缩。"
       EXTRACTED_FILE="$ORIGINAL_NAME"
@@ -136,6 +143,8 @@ echo "检测到文件格式: $FORMAT"
 if [[ "$FORMAT" != "raw" ]]; then
   echo "转换 $FORMAT 到 raw 格式..."
   qemu-img convert -O raw "$ORIGINAL_NAME" "${ORIGINAL_NAME}.img"
+  # 删除转换前的文件
+  rm -f "$ORIGINAL_NAME"
   ORIGINAL_NAME="${ORIGINAL_NAME}.img"
   FORMAT="raw"
 fi
@@ -203,8 +212,11 @@ else
   if [[ "$OUTPUT_FORMAT" != "$FORMAT" ]]; then
     echo "转换扩容后的镜像为 $OUTPUT_FORMAT 格式..."
     qemu-img convert -O "$OUTPUT_FORMAT" "$ORIGINAL_NAME" "$OUTPUT_FILENAME"
+    # 删除转换前的文件
+    rm -f "$ORIGINAL_NAME"
   else
-    cp "$ORIGINAL_NAME" "$OUTPUT_FILENAME"
+    # 格式相同，直接重命名文件
+    mv "$ORIGINAL_NAME" "$OUTPUT_FILENAME"
   fi
 fi
 
@@ -214,7 +226,12 @@ echo "处理完成，输出文件: $OUTPUT_FILENAME"
 if [ "$COMPRESS_COMMAND" == "compress" ]; then
   echo "压缩最终文件..."
   7z a -mx=9 "${OUTPUT_FILENAME}.7z" "$OUTPUT_FILENAME"
+  # 压缩完成后删除原始输出文件
+  rm -f "$OUTPUT_FILENAME"
   echo "压缩完成"
 else
   echo "处理完成"
 fi
+
+# 清理解压目录
+rm -rf extracted
