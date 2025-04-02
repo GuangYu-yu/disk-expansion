@@ -178,17 +178,33 @@ else
 
   echo "使用 parted 进行分区管理..."
   echo "当前分区表..."
-  parted $ORIGINAL_NAME print
-  
-  echo "调整分区 $PARTITION_NUMBER 大小..."
   # 在parted部分根据IS_EFI参数处理不同情况
   if [ "$IS_EFI" = "带EFI" ]; then
-    # 对于EFI镜像，使用echo提供自动回答
-    echo -e "ok\nFix\n" | parted $ORIGINAL_NAME resizepart $PARTITION_NUMBER 100%
+    # 安装expect
+    apt-get install -y expect
+    # 使用expect脚本处理交互，直接按顺序输入回答
+    expect -c "
+      spawn parted $ORIGINAL_NAME print
+      expect {
+        \"*?*\" { send \"ok\r\"; exp_continue }
+        timeout { exit 1 }
+      }
+      
+      spawn parted $ORIGINAL_NAME resizepart $PARTITION_NUMBER 100%
+      expect {
+        \"*?*\" { send \"ok\r\"; exp_continue }
+        \"*?*\" { send \"Fix\r\"; exp_continue }
+        timeout { exit 1 }
+        eof
+      }
+    "
   else
     # 对于非EFI镜像
-    parted $ORIGINAL_NAME resizepart $PARTITION_NUMBER 100%
+    parted $ORIGINAL_NAME print
   fi
+
+  # 调整分区大小
+  parted $ORIGINAL_NAME resizepart $PARTITION_NUMBER 100%
 
   # 如果输出格式与当前格式不同，则进行转换
   if [[ "$OUTPUT_FORMAT" != "$FORMAT" ]]; then
