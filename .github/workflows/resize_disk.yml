@@ -7,7 +7,7 @@ on:
         description: '原始镜像 URL'
         required: true
       expand_options:
-        description: '扩容大小，例如：2G 或 500M'
+        description: '扩容大小，例如：2G 或 500M ,输入 0 仅转换格式'
         required: true
       partition_number:
         description: '要扩容的分区号 (默认: 2)'
