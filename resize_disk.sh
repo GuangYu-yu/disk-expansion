@@ -185,18 +185,11 @@ else
     # 使用expect脚本处理交互，直接按顺序输入回答
     expect -c "
       spawn parted $ORIGINAL_NAME print
-      expect {
-        \"*?*\" { send \"ok\r\"; exp_continue }
-        timeout { exit 1 }
-      }
-      
-      spawn parted $ORIGINAL_NAME resizepart $PARTITION_NUMBER 100%
-      expect {
-        \"*?*\" { send \"ok\r\"; exp_continue }
-        \"*?*\" { send \"Fix\r\"; exp_continue }
-        timeout { exit 1 }
-        eof
-      }
+      expect \"*OK/Cancel?*\"
+      send \"ok\r\"
+      expect \"*Fix/Ignore?*\"
+      send \"Fix\r\"
+      expect eof
     "
   else
     # 对于非EFI镜像
