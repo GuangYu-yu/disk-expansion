@@ -30,8 +30,8 @@ jobs:
 
       - name: 执行 SquashFS 处理
         run: |
-          chmod +x ./squashfs.sh
-          sudo ./squashfs.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}" "${{ github.event.inputs.output_filename }}" "${{ github.event.inputs.partition_number }}" "compress"
+          chmod +x ./resize_disk.sh
+          sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}" "${{ github.event.inputs.output_filename }}" "${{ github.event.inputs.partition_number }}" "compress"
 
           ls -lah  # 列出所有文件，检查结果
           if [ ! -f "${{ github.event.inputs.output_filename }}.7z" ]; then
