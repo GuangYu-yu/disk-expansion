@@ -186,7 +186,6 @@ else
   dd if=/dev/zero bs=1M count=$EXPAND_SIZE_MB >> $ORIGINAL_NAME
 
   echo "使用 parted 进行分区管理..."
-  echo "当前分区表..."
   # 在parted部分根据IS_EFI参数处理不同情况
   if [ "$IS_EFI" = "带EFI" ]; then
     # 安装expect
