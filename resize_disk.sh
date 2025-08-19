@@ -5,20 +5,70 @@ set -e
 IMAGE_SOURCE=$1
 EXPAND_OPTIONS=$2
 OUTPUT_FILENAME=$3
-PARTITION_NUMBER=$4
-IS_EFI=$5
-COMPRESS_COMMAND=$6
+COMPRESS_COMMAND=$4
 
 if [ -z "$IMAGE_SOURCE" ] || [ -z "$EXPAND_OPTIONS" ] || [ -z "$OUTPUT_FILENAME" ]; then
-  echo "用法: $0 <镜像URL或本地文件路径> <扩容选项，例如 200M 或者 2G> <输出文件名> [分区号，默认2] [compress]"
+  echo "用法: $0 <镜像URL或本地文件路径> <扩容选项，例如 200M 或者 2G> <输出文件名> [compress]"
   exit 1
 fi
 
-# 如果分区号为空，设置默认值为2
-if [ -z "$PARTITION_NUMBER" ]; then
-  PARTITION_NUMBER=2
-  echo "未指定分区号，使用默认值: $PARTITION_NUMBER"
-fi
+# 自动检测 EFI 系统
+detect_efi() {
+    local image_file=$1
+    echo "检测 EFI 系统..."
+    # 检查分区表中是否有 EFI 相关标志
+    if parted "$image_file" print 2>/dev/null | grep -i "esp\|efi\|boot"; then
+        echo "检测到 EFI 系统"
+        echo "true"
+    else
+        echo "检测到传统 BIOS 系统"
+        echo "false"
+    fi
+}
+
+# 自动找到最大的数据分区
+find_largest_partition() {
+    local image_file=$1
+    echo "查找最大的数据分区..."
+    
+    # 打印分区表信息供调试
+    echo "分区表信息:"
+    parted "$image_file" print 2>/dev/null
+    
+    # 找到最大的分区（排除小于100MB的引导分区）
+    local largest_partition=$(parted "$image_file" print 2>/dev/null | awk '
+    /^ *[0-9]+/ {
+        # 提取分区号和大小
+        partition = $1
+        size_str = $4
+        
+        # 转换大小为MB进行比较
+        if (size_str ~ /GB$/) {
+            size = substr(size_str, 1, length(size_str)-2) * 1024
+        } else if (size_str ~ /MB$/) {
+            size = substr(size_str, 1, length(size_str)-2)
+        } else if (size_str ~ /kB$/) {
+            size = substr(size_str, 1, length(size_str)-2) / 1024
+        } else {
+            size = 0
+        }
+        
+        # 只考虑大于100MB的分区
+        if (size > 100 && size > max_size) {
+            max_size = size
+            max_partition = partition
+        }
+    }
+    END { print max_partition }')
+    
+    if [ -z "$largest_partition" ]; then
+        echo "错误：无法找到合适的数据分区"
+        exit 1
+    fi
+    
+    echo "找到最大分区: $largest_partition"
+    echo "$largest_partition"
+}
 
 # 判断是URL还是本地文件路径
 if [[ "$IMAGE_SOURCE" =~ ^https?:// ]]; then
@@ -182,14 +232,21 @@ else
     echo "未指定单位，默认使用 ${EXPAND_SIZE_MB}M"
   fi
   
+  # 自动检测 EFI 和最大分区
+  IS_EFI=$(detect_efi "$ORIGINAL_NAME")
+  PARTITION_NUMBER=$(find_largest_partition "$ORIGINAL_NAME")
+  
   echo "使用 dd 命令将 $ORIGINAL_NAME 增加指定大小"
   dd if=/dev/zero bs=1 count=0 seek=$((EXPAND_SIZE_MB * 1024 * 1024)) of="$ORIGINAL_NAME"
 
   echo "使用 parted 进行分区管理..."
-  # 在parted部分根据IS_EFI参数处理不同情况
-  if [ "$IS_EFI" = "带EFI" ]; then
-    # 安装expect
-    apt-get install -y expect
+  # 根据自动检测的EFI结果处理不同情况
+  if [ "$IS_EFI" = "true" ]; then
+    # 安装expect（如果需要）
+    if ! command -v expect &> /dev/null; then
+        echo "安装 expect..."
+        apt-get update && apt-get install -y expect
+    fi
     # 使用expect脚本处理交互，直接按顺序输入回答
     expect -c "
       spawn parted $ORIGINAL_NAME print
@@ -204,8 +261,22 @@ else
     parted $ORIGINAL_NAME print
   fi
 
+  echo "扩容分区 $PARTITION_NUMBER..."
   # 调整分区大小
   parted $ORIGINAL_NAME resizepart $PARTITION_NUMBER 100%
+
+  echo "扩展文件系统..."
+  # 挂载为 loop 设备
+  LOOP_DEVICE=$(losetup -f --show "$ORIGINAL_NAME")
+  partprobe "$LOOP_DEVICE"
+
+  # 检查并扩展文件系统
+  e2fsck -f "${LOOP_DEVICE}p${PARTITION_NUMBER}"
+  resize2fs "${LOOP_DEVICE}p${PARTITION_NUMBER}"
+
+  # 卸载 loop 设备
+  losetup -d "$LOOP_DEVICE"
+  echo "文件系统扩展完成"
 
   # 如果输出格式与当前格式不同，则进行转换
   if [[ "$OUTPUT_FORMAT" != "$FORMAT" ]]; then
