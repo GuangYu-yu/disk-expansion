@@ -183,7 +183,7 @@ else
   fi
   
   echo "使用 dd 命令将 $ORIGINAL_NAME 增加指定大小"
-  dd if=/dev/zero bs=1M count=$EXPAND_SIZE_MB >> $ORIGINAL_NAME
+  dd if=/dev/zero bs=1 count=0 seek=$((EXPAND_SIZE_MB * 1024 * 1024)) of="$ORIGINAL_NAME"
 
   echo "使用 parted 进行分区管理..."
   # 在parted部分根据IS_EFI参数处理不同情况
