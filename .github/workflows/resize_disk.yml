@@ -9,19 +9,9 @@ on:
       expand_options:
         description: '扩容大小，例如：2G 或 500M ,输入 0 仅转换格式'
         required: true
-      partition_number:
-        description: '要扩容的分区号 (默认: 2)'
-        required: false
       output_filename:
         description: '输出文件名 (例如: expanded_image.img)'
         required: true
-      is_efi:
-        description: '镜像类型'
-        required: true
-        type: choice
-        options:
-          - '带EFI'
-          - '未带EFI'
 
 jobs:
   resize_squashfs:
@@ -38,7 +28,7 @@ jobs:
       - name: 执行处理
         run: |
           chmod +x ./resize_disk.sh
-          sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}" "${{ github.event.inputs.output_filename }}" "${{ github.event.inputs.partition_number }}" "${{ github.event.inputs.is_efi }}" "compress"
+          sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}" "${{ github.event.inputs.output_filename }}" "compress"
 
           ls -lah  # 列出所有文件，检查结果
           if [ ! -f "${{ github.event.inputs.output_filename }}.7z" ]; then
