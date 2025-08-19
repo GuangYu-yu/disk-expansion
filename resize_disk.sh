@@ -35,30 +35,8 @@ find_largest_partition() {
     echo "分区表信息:"
     parted "$image_file" print 2>/dev/null
     
-    # 找到（Size）最大的分区
-    local largest_partition=$(parted "$image_file" print 2>/dev/null | awk '
-    /^ *[0-9]+/ {
-        # 提取分区号和大小
-        partition = $1
-        size_str = $4
-        
-        # 转换大小为MB进行比较
-        size_mb = 0
-        if (size_str ~ /GB$/) {
-            size_mb = substr(size_str, 1, length(size_str)-2) * 1024
-        } else if (size_str ~ /MB$/) {
-            size_mb = substr(size_str, 1, length(size_str)-2)
-        } else if (size_str ~ /kB$/) {
-            size_mb = substr(size_str, 1, length(size_str)-2) / 1024
-        }
-        
-        # 找到最大的分区
-        if (size_mb > max_size) {
-            max_size = size_mb
-            max_partition = partition
-        }
-    }
-    END { print max_partition }')
+    # 提取分区号和大小，按大小排序取最大
+    local largest_partition=$(parted "$image_file" print 2>/dev/null | awk '/^ *[0-9]+/ {print $1, $4}' | sort -k2 -n | tail -n1 | awk '{print $1}')
     
     if [ -z "$largest_partition" ]; then
         echo "错误：无法找到合适的数据分区"
