@@ -222,51 +222,15 @@ else
   fi
 
   echo "扩容分区 $PARTITION_NUMBER..."
-  # 调整分区大小
-  parted $ORIGINAL_NAME resizepart $PARTITION_NUMBER 100%
+  virt-resize --expand /dev/sda${PARTITION_NUMBER} "$ORIGINAL_NAME" "${OUTPUT_FILENAME}.tmp"
 
-  echo "扩展文件系统..."
-  # 挂载为 loop 设备
-  LOOP_DEVICE=$(losetup -f --show "$ORIGINAL_NAME")
-  echo "创建 loop 设备: $LOOP_DEVICE"
-
-  # 强制重新读取分区表
-  partprobe "$LOOP_DEVICE"
-
-  # 获取设备名称
-  DEVICE_NAME=$(basename "$LOOP_DEVICE")
-  echo "设备名称: $DEVICE_NAME"
-
-  # 使用 kpartx 建立分区映射
-  echo "建立分区映射..."
-  kpartx -av "$LOOP_DEVICE"
-
-  # 构建目标设备路径
-  TARGET_DEV="/dev/mapper/${DEVICE_NAME}p${PARTITION_NUMBER}"
-  echo "目标分区设备: $TARGET_DEV"
-
-  # 检查并扩展文件系统
-  echo "检查文件系统完整性..."
-  e2fsck -f "$TARGET_DEV"
-
-  echo "扩展文件系统到分区完整大小..."
-  resize2fs "$TARGET_DEV"
-
-  # 清理资源
-  echo "清理分区映射和 loop 设备..."
-  kpartx -d "$LOOP_DEVICE"
-  losetup -d "$LOOP_DEVICE"
-  echo "文件系统扩展完成"
-
-  # 如果输出格式与当前格式不同，则进行转换
+  # 根据目标输出格式决定是否转换
   if [[ "$OUTPUT_FORMAT" != "$FORMAT" ]]; then
     echo "转换扩容后的镜像为 $OUTPUT_FORMAT 格式..."
-    qemu-img convert -O "$OUTPUT_FORMAT" "$ORIGINAL_NAME" "$OUTPUT_FILENAME"
-    # 删除转换前的文件
-    rm -f "$ORIGINAL_NAME"
+    qemu-img convert -O "$OUTPUT_FORMAT" "${OUTPUT_FILENAME}.tmp" "$OUTPUT_FILENAME"
+    rm -f "${OUTPUT_FILENAME}.tmp"
   else
-    # 格式相同，直接重命名文件
-    mv "$ORIGINAL_NAME" "$OUTPUT_FILENAME"
+    mv "${OUTPUT_FILENAME}.tmp" "$OUTPUT_FILENAME"
   fi
 fi
 
