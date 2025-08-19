@@ -228,13 +228,33 @@ else
   echo "扩展文件系统..."
   # 挂载为 loop 设备
   LOOP_DEVICE=$(losetup -f --show "$ORIGINAL_NAME")
+  echo "创建 loop 设备: $LOOP_DEVICE"
+
+  # 强制重新读取分区表
   partprobe "$LOOP_DEVICE"
 
-  # 检查并扩展文件系统
-  e2fsck -f "${LOOP_DEVICE}p${PARTITION_NUMBER}"
-  resize2fs "${LOOP_DEVICE}p${PARTITION_NUMBER}"
+  # 获取设备名称
+  DEVICE_NAME=$(basename "$LOOP_DEVICE")
+  echo "设备名称: $DEVICE_NAME"
 
-  # 卸载 loop 设备
+  # 使用 kpartx 建立分区映射
+  echo "建立分区映射..."
+  kpartx -av "$LOOP_DEVICE"
+
+  # 构建目标设备路径
+  TARGET_DEV="/dev/mapper/${DEVICE_NAME}p${PARTITION_NUMBER}"
+  echo "目标分区设备: $TARGET_DEV"
+
+  # 检查并扩展文件系统
+  echo "检查文件系统完整性..."
+  e2fsck -f "$TARGET_DEV"
+
+  echo "扩展文件系统到分区完整大小..."
+  resize2fs "$TARGET_DEV"
+
+  # 清理资源
+  echo "清理分区映射和 loop 设备..."
+  kpartx -d "$LOOP_DEVICE"
   losetup -d "$LOOP_DEVICE"
   echo "文件系统扩展完成"
 
