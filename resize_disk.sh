@@ -13,27 +13,6 @@ if [ -z "$IMAGE_SOURCE" ] || [ -z "$EXPAND_OPTIONS" ] || [ -z "$OUTPUT_FILENAME"
   exit 1
 fi
 
-# 自动找到最大的数据分区
-find_largest_partition() {
-    local image_file=$1
-    echo "查找最大的数据分区..."
-    
-    # 打印分区表信息供调试
-    echo "分区表信息:"
-    parted "$image_file" print 2>/dev/null
-    
-    # 提取分区号和大小，按大小排序取最大
-    local largest_partition=$(parted "$image_file" print 2>/dev/null | awk '/^ *[0-9]+/ {print $1, $4}' | sort -k2 -n | tail -n1 | awk '{print $1}')
-    
-    if [ -z "$largest_partition" ]; then
-        echo "错误：无法找到合适的数据分区"
-        exit 1
-    fi
-    
-    echo "找到最大分区: $largest_partition"
-    echo "$largest_partition"
-}
-
 # 判断是URL还是本地文件路径
 if [[ "$IMAGE_SOURCE" =~ ^https?:// ]]; then
   # 是URL，下载原始镜像
@@ -196,41 +175,45 @@ else
     echo "未指定单位，默认使用 ${EXPAND_SIZE_MB}M"
   fi
   
-  # 自动检测最大分区
-  PARTITION_NUMBER=$(find_largest_partition "$ORIGINAL_NAME")
+  # 获取原始镜像大小
+  ORIGINAL_SIZE=$(qemu-img info "$ORIGINAL_NAME" | grep "virtual size" | sed -E 's/.*\(([0-9]+) bytes\).*/\1/')
+  echo "检测到镜像大小: $ORIGINAL_SIZE 字节"
+  ORIGINAL_SIZE_MB=$(echo "$ORIGINAL_SIZE / 1024 / 1024" | bc)
   
-  echo "使用 dd 命令将 $ORIGINAL_NAME 增加指定大小"
-  dd if=/dev/zero bs=1M count=0 seek=$EXPAND_SIZE_MB of="$ORIGINAL_NAME"
-
-  echo "使用 parted 进行分区管理..."
-  # 在parted部分根据IS_EFI参数处理不同情况
-  if [ "$IS_EFI" = "带EFI" ]; then
-    # 安装expect
-    apt-get install -y expect
-    # 使用expect脚本处理交互，直接按顺序输入回答
-    expect -c "
-      spawn parted $ORIGINAL_NAME print
-      expect \"*OK/Cancel?*\"
-      send \"ok\r\"
-      expect \"*Fix/Ignore?*\"
-      send \"Fix\r\"
-      expect eof
-    "
-  else
-    # 对于非EFI镜像
-    parted $ORIGINAL_NAME print
+  # 计算新镜像总大小（原始大小 + 扩容大小）
+  TOTAL_SIZE=$(echo "$ORIGINAL_SIZE_MB + $EXPAND_SIZE_MB" | bc)
+  
+  # 自动检测最大分区
+  echo "查找镜像中的最大分区..."
+  # 打印完整的分区表格，便于在日志中查看
+  echo "镜像中的分区信息表格:"
+  virt-filesystems -a "$ORIGINAL_NAME" -l
+  
+  # 使用virt-filesystems获取镜像中的分区信息，并提取最大分区
+  PARTITION=$(virt-filesystems -a "$ORIGINAL_NAME" -l | awk 'NR>1 {print $1, $5}' | sort -k2 -n | tail -n1 | awk '{print $1}')
+  if [ -z "$PARTITION" ]; then
+    echo "错误：无法在镜像中找到分区。"
+    exit 1
   fi
+  echo "找到镜像中的最大分区: $PARTITION"
+  
+  # 创建新的扩容后的磁盘镜像
+  RESIZED_NAME="resized_${ORIGINAL_NAME}"
+  echo "创建新的磁盘镜像，大小为 ${TOTAL_SIZE}M（原始 ${ORIGINAL_SIZE_MB}M + 扩容 ${EXPAND_SIZE_MB}M）..."
+  qemu-img create -f "$FORMAT" "$RESIZED_NAME" "${TOTAL_SIZE}M"
 
-  echo "扩容分区 $PARTITION_NUMBER..."
-  virt-resize --expand /dev/sda${PARTITION_NUMBER} "$ORIGINAL_NAME" "${OUTPUT_FILENAME}.tmp"
+  echo "正在将分区 $PARTITION 扩容 ${EXPAND_SIZE_MB}M..."
+  virt-resize --expand "$PARTITION" "$ORIGINAL_NAME" "$RESIZED_NAME"
 
-  # 根据目标输出格式决定是否转换
+  echo "扩容完成！新镜像: $RESIZED_NAME"
+
+  # 如果输出格式与当前格式不同，则进行转换
   if [[ "$OUTPUT_FORMAT" != "$FORMAT" ]]; then
     echo "转换扩容后的镜像为 $OUTPUT_FORMAT 格式..."
-    qemu-img convert -O "$OUTPUT_FORMAT" "${OUTPUT_FILENAME}.tmp" "$OUTPUT_FILENAME"
-    rm -f "${OUTPUT_FILENAME}.tmp"
+    qemu-img convert -O "$OUTPUT_FORMAT" "$RESIZED_NAME" "$OUTPUT_FILENAME"
+    rm "$RESIZED_NAME"  # 删除中间文件
   else
-    mv "${OUTPUT_FILENAME}.tmp" "$OUTPUT_FILENAME"
+    mv "$RESIZED_NAME" "$OUTPUT_FILENAME"
   fi
 fi
 
