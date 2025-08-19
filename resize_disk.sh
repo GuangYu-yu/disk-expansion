@@ -5,26 +5,13 @@ set -e
 IMAGE_SOURCE=$1
 EXPAND_OPTIONS=$2
 OUTPUT_FILENAME=$3
-COMPRESS_COMMAND=$4
+IS_EFI=$4
+COMPRESS_COMMAND=$5
 
-if [ -z "$IMAGE_SOURCE" ] || [ -z "$EXPAND_OPTIONS" ] || [ -z "$OUTPUT_FILENAME" ]; then
-  echo "用法: $0 <镜像URL或本地文件路径> <扩容选项，例如 200M 或者 2G> <输出文件名> [compress]"
+if [ -z "$IMAGE_SOURCE" ] || [ -z "$EXPAND_OPTIONS" ] || [ -z "$OUTPUT_FILENAME" ] || [ -z "$IS_EFI" ]; then
+  echo "用法: $0 <镜像URL或本地文件路径> <扩容选项，例如 200M 或者 2G> <输出文件名> <镜像类型：带EFI 或 未带EFI> [compress]"
   exit 1
 fi
-
-# 自动检测 EFI 系统
-detect_efi() {
-    local image_file=$1
-    echo "检测 EFI 系统..."
-    # 检查分区表中是否有 EFI 相关标志
-    if parted "$image_file" print 2>/dev/null | grep -i "esp\|efi\|boot"; then
-        echo "检测到 EFI 系统"
-        echo "true"
-    else
-        echo "检测到传统 BIOS 系统"
-        echo "false"
-    fi
-}
 
 # 自动找到最大的数据分区
 find_largest_partition() {
@@ -209,21 +196,17 @@ else
     echo "未指定单位，默认使用 ${EXPAND_SIZE_MB}M"
   fi
   
-  # 自动检测 EFI 和最大分区
-  IS_EFI=$(detect_efi "$ORIGINAL_NAME")
+  # 自动检测最大分区
   PARTITION_NUMBER=$(find_largest_partition "$ORIGINAL_NAME")
   
   echo "使用 dd 命令将 $ORIGINAL_NAME 增加指定大小"
   dd if=/dev/zero bs=1 count=0 seek=$((EXPAND_SIZE_MB * 1024 * 1024)) of="$ORIGINAL_NAME"
 
   echo "使用 parted 进行分区管理..."
-  # 根据自动检测的EFI结果处理不同情况
-  if [ "$IS_EFI" = "true" ]; then
-    # 安装expect（如果需要）
-    if ! command -v expect &> /dev/null; then
-        echo "安装 expect..."
-        apt-get update && apt-get install -y expect
-    fi
+  # 在parted部分根据IS_EFI参数处理不同情况
+  if [ "$IS_EFI" = "带EFI" ]; then
+    # 安装expect
+    apt-get install -y expect
     # 使用expect脚本处理交互，直接按顺序输入回答
     expect -c "
       spawn parted $ORIGINAL_NAME print
