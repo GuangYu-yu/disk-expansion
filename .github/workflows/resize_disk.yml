@@ -6,15 +6,12 @@ on:
       image_url:
         description: '原始镜像 URL'
         required: true
-      expand_options:
-        description: '扩容大小，例如：2G 或 500M ,输入 0 仅转换格式'
-        required: true
       output_filename:
-        description: '输出文件名 (例如: expanded_image.img)'
+        description: '输出文件名'
         required: true
-      partition_name:
-        description: '分区名 (可选，留空自动检测最大分区)'
-        required: false
+      resize_rule:
+        description: '扩容规则'
+        required: true
 
 jobs:
   resize_squashfs:
@@ -31,7 +28,7 @@ jobs:
       - name: 执行处理
         run: |
           chmod +x ./resize_disk.sh
-          sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.expand_options }}" "${{ github.event.inputs.output_filename }}" "${{ github.event.inputs.partition_name }}" "compress"
+          sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.output_filename }}" "${{ github.event.inputs.resize_rule }}"
 
           ls -lah
           if [ ! -f "${{ github.event.inputs.output_filename }}.7z" ]; then
