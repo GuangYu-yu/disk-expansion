@@ -17,14 +17,24 @@ cleanup() {
 trap cleanup EXIT
 
 IMAGE_SOURCE=$1
-EXPAND_OPTIONS=$2
-OUTPUT_FILENAME=$3
-PARTITION_NAME=$4
-COMPRESS_COMMAND=$5
+OUTPUT_FILENAME=$2
+RESIZE_RULE=$3
 
-if [ -z "$IMAGE_SOURCE" ] || [ -z "$EXPAND_OPTIONS" ] || [ -z "$OUTPUT_FILENAME" ]; then
-  echo "用法: $0 <镜像URL或本地文件路径> <扩容选项，例如 200M 或者 2G> <输出文件名> [分区名] [compress]"
-  echo "  分区名: 可选，留空自动检测最大分区"
+if [ -z "$IMAGE_SOURCE" ] || [ -z "$OUTPUT_FILENAME" ] || [ -z "$RESIZE_RULE" ]; then
+  echo "用法: $0 <镜像URL或本地文件路径> <输出文件名> <扩容规则>"
+  echo ""
+  echo "扩容规则:"
+  echo "  0                         仅格式转换"
+  echo "  2G                        自动选择分区，扩容 2G"
+  echo "  +10%                      自动选择分区，增加 10%"
+  echo "  =10G                      自动选择分区，设为 10G"
+  echo "  /dev/sda2                 指定分区填满剩余空间"
+  echo "  /dev/sda2+2G              分区增加 2G"
+  echo "  /dev/sda2=10G             分区设为 10G"
+  echo "  /dev/sda2+10%             分区增加 10%"
+  echo "  /dev/vg/lv+2G             LVM 逻辑卷增加 2G"
+  echo "  /dev/sda1+100M,/dev/sda2  多分区调整（逗号分隔）"
+  echo ""
   exit 1
 fi
 
@@ -46,29 +56,61 @@ else
   fi
 fi
 
+get_format_from_ext() {
+  local filename="$1"
+  local ext="${filename##*.}"
+  ext="${ext,,}"
+  
+  case "$ext" in
+    qcow2) echo "qcow2" ;;
+    raw|img) echo "raw" ;;
+    vmdk) echo "vmdk" ;;
+    vdi) echo "vdi" ;;
+    vhd) echo "vpc" ;;
+    vhdx) echo "vhdx" ;;
+    qed) echo "qed" ;;
+    luks) echo "luks" ;;
+    hdd) echo "parallels" ;;
+    *) echo "" ;;
+  esac
+}
+
+is_valid_image() {
+  local filename="$1"
+  [ -n "$(get_format_from_ext "$filename")" ]
+}
+
 EXTRACTED_FILE=""
 
 case "$ORIGINAL_NAME" in
   *.gz)
     echo "检测到 gzip 压缩，解压中..."
-    gunzip "$ORIGINAL_NAME" || true
     EXTRACTED_FILE="${ORIGINAL_NAME%.gz}"
+    gunzip -c "$ORIGINAL_NAME" | dd of="$EXTRACTED_FILE" conv=sparse
+    rm -f "$ORIGINAL_NAME"
     ;;
   *.xz)
     echo "检测到 xz 压缩，解压中..."
-    xz -d "$ORIGINAL_NAME" || true
     EXTRACTED_FILE="${ORIGINAL_NAME%.xz}"
+    xz -dc "$ORIGINAL_NAME" | dd of="$EXTRACTED_FILE" conv=sparse
+    rm -f "$ORIGINAL_NAME"
     ;;
   *.bz2)
     echo "检测到 bzip2 压缩，解压中..."
-    bzip2 -d "$ORIGINAL_NAME" || true
     EXTRACTED_FILE="${ORIGINAL_NAME%.bz2}"
+    bzip2 -dc "$ORIGINAL_NAME" | dd of="$EXTRACTED_FILE" conv=sparse
+    rm -f "$ORIGINAL_NAME"
     ;;
   *.zip)
     echo "检测到 zip 压缩，解压中..."
     mkdir -p extracted
     unzip "$ORIGINAL_NAME" -d extracted || true
-    EXTRACTED_FILE=$(find extracted -type f | head -n1)
+    EXTRACTED_FILE=$(find extracted -type f | while read -r f; do
+      if is_valid_image "$f"; then
+        echo "$f"
+        break
+      fi
+    done)
     rm -f "$ORIGINAL_NAME"
     ;;
   *)
@@ -100,59 +142,68 @@ if [ -z "$FORMAT" ]; then
 fi
 echo "检测到文件格式: $FORMAT"
 
-if [[ "$FORMAT" != "raw" ]]; then
-  echo "转换 $FORMAT 到 raw 格式..."
-  RAW_FILE="raw_${RANDOM_SUFFIX}.raw"
-  qemu-img convert -O raw "$ORIGINAL_NAME" "$RAW_FILE"
-  TEMP_FILES+=("$RAW_FILE")
-  ORIGINAL_NAME="$RAW_FILE"
-  FORMAT="raw"
+OUTPUT_FORMAT=$(get_format_from_ext "$OUTPUT_FILENAME")
+if [ -z "$OUTPUT_FORMAT" ]; then
+  echo "警告：未知格式，默认使用 raw"
+  OUTPUT_FORMAT="raw"
 fi
+echo "输出格式: $OUTPUT_FORMAT"
 
-case "${OUTPUT_FILENAME,,}" in
-  *.qcow2) OUTPUT_FORMAT="qcow2" ;;
-  *.raw|*.img) OUTPUT_FORMAT="raw" ;;
-  *.vmdk) OUTPUT_FORMAT="vmdk" ;;
-  *.vdi) OUTPUT_FORMAT="vdi" ;;
-  *.vhd) OUTPUT_FORMAT="vpc" ;;
-  *.vhdx) OUTPUT_FORMAT="vhdx" ;;
-  *.qed) OUTPUT_FORMAT="qed" ;;
-  *)
-    echo "警告：未知格式，默认使用 raw"
-    OUTPUT_FORMAT="raw"
-    ;;
-esac
+parse_size_to_bytes() {
+  local size_str="$1"
+  local size_num size_unit
+  
+  if [[ "$size_str" =~ ^([0-9]+)([GMK])$ ]]; then
+    size_num=${BASH_REMATCH[1]}
+    size_unit=${BASH_REMATCH[2]}
+    case "$size_unit" in
+      G) echo $((size_num * 1073741824)) ;;
+      M) echo $((size_num * 1048576)) ;;
+      K) echo $((size_num * 1024)) ;;
+    esac
+  elif [[ "$size_str" =~ ^([0-9]+)$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+  else
+    echo "0"
+  fi
+}
 
-if [[ "$EXPAND_OPTIONS" == "0" ]]; then
+get_partition_size_bytes() {
+  local partition="$1"
+  echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v size_col="$COL_SIZE" -v part="$partition" '
+    NR>1 && $name_col == part {print $size_col; exit}
+  '
+}
+
+calc_expand_bytes() {
+  local size_str="$1"
+  local current_bytes="$2"
+  
+  if [[ "$size_str" =~ ^([0-9]+)%$ ]]; then
+    local percent=${BASH_REMATCH[1]}
+    local expand_bytes=$(( current_bytes * percent / 100 ))
+    echo $(( (expand_bytes + 65535) / 65536 * 65536 ))
+  else
+    local target_bytes=$(parse_size_to_bytes "$size_str")
+    if [ "$target_bytes" -gt "$current_bytes" ]; then
+      local expand_bytes=$(( target_bytes - current_bytes ))
+      echo $(( (expand_bytes + 65535) / 65536 * 65536 ))
+    else
+      echo "0"
+    fi
+  fi
+}
+
+if [[ "$RESIZE_RULE" == "0" ]]; then
   echo "扩容大小为0，直接进行格式转换..."
   qemu-img convert -O "$OUTPUT_FORMAT" "$ORIGINAL_NAME" "$OUTPUT_FILENAME"
   echo "格式转换完成！"
 else
-  if [[ "$EXPAND_OPTIONS" =~ ^([0-9]+)([GMK])$ ]]; then
-    SIZE_NUM=${BASH_REMATCH[1]}
-    SIZE_UNIT=${BASH_REMATCH[2]}
-    
-    case "$SIZE_UNIT" in
-      G) EXPAND_SIZE_MB=$((SIZE_NUM * 1024)) ;;
-      M) EXPAND_SIZE_MB=$SIZE_NUM ;;
-      K) EXPAND_SIZE_MB=$((SIZE_NUM / 1024)) ;;
-    esac
-    echo "扩容大小: ${EXPAND_SIZE_MB}M"
-  else
-    EXPAND_SIZE_MB=$EXPAND_OPTIONS
-    echo "未指定单位，默认使用 ${EXPAND_SIZE_MB}M"
-  fi
-  
   ORIGINAL_SIZE=$(qemu-img info "$ORIGINAL_NAME" 2>/dev/null | grep "virtual size" | sed -E 's/.*\(([0-9]+) bytes\).*/\1/')
   if [ -z "$ORIGINAL_SIZE" ]; then
     ORIGINAL_SIZE=$(stat -c %s "$ORIGINAL_NAME" 2>/dev/null || stat -f %z "$ORIGINAL_NAME")
   fi
   echo "检测到镜像大小: $ORIGINAL_SIZE 字节"
-  
-  ORIGINAL_SIZE_MB=$(( (ORIGINAL_SIZE + 1048575) / 1048576 ))
-  echo "向上取整后: ${ORIGINAL_SIZE_MB}MB"
-  
-  TOTAL_SIZE=$((ORIGINAL_SIZE_MB + EXPAND_SIZE_MB))
   
   echo "查找镜像中的分区..."
   echo "镜像中的分区信息表格:"
@@ -160,49 +211,254 @@ else
   
   echo ""
   echo "检测 LVM..."
-  if virt-filesystems -a "$ORIGINAL_NAME" -l 2>/dev/null | grep -qi "lvm"; then
-    echo "错误：检测到 LVM，当前脚本不支持 LVM 自动扩容"
-    echo "LVM 相关分区："
-    virt-filesystems -a "$ORIGINAL_NAME" -l 2>/dev/null | grep -i "lvm" || true
+  HAS_LVM=false
+  LV_LIST=""
+  if virt-filesystems -a "$ORIGINAL_NAME" --lvs 2>/dev/null | grep -q .; then
+    HAS_LVM=true
+    LV_LIST=$(virt-filesystems -a "$ORIGINAL_NAME" --lvs 2>/dev/null)
+    echo "检测到 LVM 逻辑卷："
+    echo "$LV_LIST"
+  fi
+  
+  FS_INFO=$(virt-filesystems -a "$ORIGINAL_NAME" -l 2>/dev/null)
+  HEADER=$(echo "$FS_INFO" | head -n1)
+  
+  COL_NAME=$(echo "$HEADER" | awk '{for(i=1;i<=NF;i++) if($i=="Name") print i}')
+  COL_VFS=$(echo "$HEADER" | awk '{for(i=1;i<=NF;i++) if($i=="VFS") print i}')
+  COL_LABEL=$(echo "$HEADER" | awk '{for(i=1;i<=NF;i++) if($i=="Label") print i}')
+  COL_SIZE=$(echo "$HEADER" | awk '{for(i=1;i<=NF;i++) if($i=="Size") print i}')
+  COL_TYPE=$(echo "$HEADER" | awk '{for(i=1;i<=NF;i++) if($i=="Type") print i}')
+  
+  RESIZE_OPTS=""
+  EXPAND_PARTITION=""
+  LV_EXPAND=""
+  EXPAND_SIZE_BYTES=0
+  
+  is_lv() {
+    local name="$1"
+    echo "$LV_LIST" | awk '{print $1}' | grep -Fxq "$name"
+  }
+  
+  find_expand_partition() {
+    local pv_list
+    pv_list=$(virt-filesystems -a "$ORIGINAL_NAME" --pv 2>/dev/null)
+    
+    if [ -n "$pv_list" ]; then
+      local pv_count
+      pv_count=$(echo "$pv_list" | grep -c .)
+      
+      if [ "$pv_count" -gt 1 ]; then
+        echo "错误：检测到多个 PV，请手动指定分区规则" >&2
+        echo "可用 PV：" >&2
+        echo "$pv_list" >&2
+        exit 1
+      fi
+      
+      local pv
+      pv=$(echo "$pv_list" | head -n1)
+      
+      local is_part
+      is_part=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v type_col="$COL_TYPE" -v p="$pv" '
+        NR>1 && $name_col == p && $type_col == "partition" {print 1}
+      ')
+      
+      if [ "$is_part" = "1" ]; then
+        echo "$pv"
+        return
+      fi
+      
+      local lvm_devs
+      lvm_devs=$(echo "$FS_INFO" | awk -v vfs_col="$COL_VFS" -v name_col="$COL_NAME" '
+        NR>1 && $vfs_col == "lvm" {print $name_col}
+      ')
+      
+      echo "$FS_INFO" | awk -v type_col="$COL_TYPE" -v name_col="$COL_NAME" -v size_col="$COL_SIZE" -v lvm="$lvm_devs" '
+        BEGIN {
+          split(lvm, arr, "\n")
+          for (i in arr) map[arr[i]] = 1
+        }
+        NR>1 && $type_col == "partition" && map[$name_col] {print $name_col, $size_col}
+      ' | sort -k2 -n | tail -n1 | awk '{print $1}'
+      return
+    fi
+    
+    echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v size_col="$COL_SIZE" '
+      NR>1 && $vfs_col !~ /swap|unknown|efi/ && $name_col !~ /boot/ {print $name_col, $size_col}
+    ' | sort -k2 -n | tail -n1 | awk '{print $1}'
+  }
+  
+  IFS=',' read -ra RULES <<< "$RESIZE_RULE"
+  RULE_COUNT=${#RULES[@]}
+  
+  for i in "${!RULES[@]}"; do
+    rule="${RULES[$i]}"
+    rule=$(echo "$rule" | xargs)
+    
+    if [[ "$rule" =~ ^/dev/ ]]; then
+      if [[ "$rule" =~ ^(/dev/[^+=%]+)([+=])(.+)$ ]]; then
+        partition="${BASH_REMATCH[1]}"
+        operator="${BASH_REMATCH[2]}"
+        size="${BASH_REMATCH[3]}"
+        
+        if is_lv "$partition"; then
+          if [ -z "$EXPAND_PARTITION" ]; then
+            EXPAND_PARTITION=$(find_expand_partition)
+          fi
+          if [ "$operator" == "+" ]; then
+            LV_EXPAND="$partition"
+            echo "规则: LV $partition 增加 $size"
+            if [[ "$size" =~ %$ ]]; then
+              current_bytes=$(get_partition_size_bytes "$partition")
+              size_bytes=$(calc_expand_bytes "$size" "$current_bytes")
+            else
+              size_bytes=$(parse_size_to_bytes "$size")
+            fi
+            EXPAND_SIZE_BYTES=$((EXPAND_SIZE_BYTES + size_bytes))
+          else
+            LV_EXPAND="$partition"
+            echo "规则: LV $partition 设为 $size"
+            current_bytes=$(get_partition_size_bytes "$partition")
+            size_bytes=$(calc_expand_bytes "$size" "$current_bytes")
+            EXPAND_SIZE_BYTES=$((EXPAND_SIZE_BYTES + size_bytes))
+          fi
+        else
+          if [ "$operator" == "+" ]; then
+            RESIZE_OPTS="$RESIZE_OPTS --resize ${partition}=+${size}"
+            echo "规则: 分区 $partition 增加 $size"
+            if [[ "$size" =~ %$ ]]; then
+              current_bytes=$(get_partition_size_bytes "$partition")
+              size_bytes=$(calc_expand_bytes "$size" "$current_bytes")
+            else
+              size_bytes=$(parse_size_to_bytes "$size")
+            fi
+            EXPAND_SIZE_BYTES=$((EXPAND_SIZE_BYTES + size_bytes))
+          else
+            RESIZE_OPTS="$RESIZE_OPTS --resize ${partition}=${size}"
+            echo "规则: 分区 $partition 设为 $size"
+            current_bytes=$(get_partition_size_bytes "$partition")
+            size_bytes=$(calc_expand_bytes "$size" "$current_bytes")
+            EXPAND_SIZE_BYTES=$((EXPAND_SIZE_BYTES + size_bytes))
+          fi
+        fi
+      else
+        partition="$rule"
+        
+        if is_lv "$partition"; then
+          if [ -z "$EXPAND_PARTITION" ]; then
+            EXPAND_PARTITION=$(find_expand_partition)
+          fi
+          LV_EXPAND="$partition"
+          echo "规则: LV $partition 填满剩余空间"
+        else
+          if [ $((i + 1)) -eq $RULE_COUNT ]; then
+            EXPAND_PARTITION="$partition"
+            echo "规则: 分区 $partition 填满剩余空间"
+          else
+            RESIZE_OPTS="$RESIZE_OPTS --resize ${partition}=+0"
+            echo "规则: 分区 $partition 保持大小"
+          fi
+        fi
+      fi
+    else
+      if [[ "$rule" =~ ^([0-9]+)([GMK]?)$ ]]; then
+        size="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+        EXPAND_SIZE_BYTES=$(parse_size_to_bytes "$size")
+        
+        EXPAND_PARTITION=$(find_expand_partition)
+        if [ -n "$EXPAND_PARTITION" ]; then
+          echo "规则: 自动选择分区 $EXPAND_PARTITION，扩容 $size"
+        fi
+      elif [[ "$rule" =~ ^([+=])(.+)$ ]]; then
+        operator="${BASH_REMATCH[1]}"
+        size="${BASH_REMATCH[2]}"
+        
+        EXPAND_PARTITION=$(find_expand_partition)
+        if [ -n "$EXPAND_PARTITION" ]; then
+          
+          current_bytes=$(get_partition_size_bytes "$EXPAND_PARTITION")
+          
+          if [ "$operator" == "+" ]; then
+            if [[ "$size" =~ %$ ]]; then
+              RESIZE_OPTS="$RESIZE_OPTS --resize ${EXPAND_PARTITION}=+${size}"
+              size_bytes=$(calc_expand_bytes "$size" "$current_bytes")
+              echo "规则: 自动选择分区 $EXPAND_PARTITION，增加 $size"
+            else
+              RESIZE_OPTS="$RESIZE_OPTS --resize ${EXPAND_PARTITION}=+${size}"
+              size_bytes=$(parse_size_to_bytes "$size")
+              echo "规则: 自动选择分区 $EXPAND_PARTITION，增加 $size"
+            fi
+          else
+            RESIZE_OPTS="$RESIZE_OPTS --resize ${EXPAND_PARTITION}=${size}"
+            size_bytes=$(calc_expand_bytes "$size" "$current_bytes")
+            echo "规则: 自动选择分区 $EXPAND_PARTITION，设为 $size"
+          fi
+          EXPAND_SIZE_BYTES=$((EXPAND_SIZE_BYTES + size_bytes))
+        fi
+      else
+        echo "错误：无法解析规则 '$rule'"
+        exit 1
+      fi
+    fi
+  done
+  
+  if [ -z "$EXPAND_PARTITION" ]; then
+    echo "错误：无法确定要扩容的分区"
     exit 1
   fi
   
-  if [ -n "$PARTITION_NAME" ]; then
-    PARTITION="$PARTITION_NAME"
-    echo "使用指定分区: $PARTITION"
-  else
-    PARTITION=$(virt-filesystems -a "$ORIGINAL_NAME" -l | awk 'NR>1 {print $1, $5}' | sort -k2 -n | tail -n1 | awk '{print $1}')
-    if [ -z "$PARTITION" ]; then
-      echo "错误：无法在镜像中找到分区。"
-      exit 1
-    fi
-    echo "找到最大分区: $PARTITION"
+  if [ $EXPAND_SIZE_BYTES -eq 0 ]; then
+    echo "错误：没有指定扩容大小"
+    echo "示例: 2G 或 +10% 或 /dev/sda2+2G"
+    exit 1
   fi
   
-  RESIZED_NAME="stage2_${RANDOM_SUFFIX}.raw"
+  TOTAL_SIZE=$((ORIGINAL_SIZE + EXPAND_SIZE_BYTES))
+  
+  RESIZED_NAME="stage2_${RANDOM_SUFFIX}.${OUTPUT_FORMAT}"
   TEMP_FILES+=("$RESIZED_NAME")
   
-  echo "创建新的磁盘镜像，大小为 ${TOTAL_SIZE}M（原始 ${ORIGINAL_SIZE_MB}M + 扩容 ${EXPAND_SIZE_MB}M）..."
-  qemu-img create -f "$FORMAT" "$RESIZED_NAME" "${TOTAL_SIZE}M"
+  echo "创建新的磁盘镜像，大小为 ${TOTAL_SIZE} 字节（原始 ${ORIGINAL_SIZE} + 扩容 ${EXPAND_SIZE_BYTES}）..."
+  if [[ "$OUTPUT_FORMAT" == "qcow2" ]]; then
+    qemu-img create -f qcow2 -o preallocation=metadata "$RESIZED_NAME" "$TOTAL_SIZE"
+  else
+    qemu-img create -f "$OUTPUT_FORMAT" "$RESIZED_NAME" "$TOTAL_SIZE"
+  fi
 
-  echo "正在将分区 $PARTITION 扩容 ${EXPAND_SIZE_MB}M..."
-  virt-resize --expand "$PARTITION" "$ORIGINAL_NAME" "$RESIZED_NAME"
+  RESIZE_CMD="virt-resize --expand $EXPAND_PARTITION"
+  
+  if [ -n "$RESIZE_OPTS" ]; then
+    RESIZE_CMD="$RESIZE_CMD $RESIZE_OPTS"
+  fi
+  
+  SWAP_PARTITIONS=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v part="$EXPAND_PARTITION" '
+    NR>1 && $vfs_col == "swap" && $name_col != part {print $name_col}
+  ')
+  if [ -n "$SWAP_PARTITIONS" ]; then
+    echo "将忽略 swap 分区以加速复制："
+    for swap_part in $SWAP_PARTITIONS; do
+      RESIZE_CMD="$RESIZE_CMD --ignore $swap_part"
+      echo "  - $swap_part"
+    done
+  fi
+  
+  if [ -n "$LV_EXPAND" ]; then
+    RESIZE_CMD="$RESIZE_CMD --LV-expand $LV_EXPAND"
+    echo "将扩容 LVM 逻辑卷: $LV_EXPAND"
+  elif [ "$HAS_LVM" = true ]; then
+    echo "提示：检测到 LVM 但未指定 LV，仅扩容 PV。如需扩容 LV 请在规则中指定 LV 名"
+  fi
+  
+  echo "执行: $RESIZE_CMD \"$ORIGINAL_NAME\" \"$RESIZED_NAME\""
+  $RESIZE_CMD "$ORIGINAL_NAME" "$RESIZED_NAME"
 
   echo "扩容完成！"
 
-  if [[ "$OUTPUT_FORMAT" != "$FORMAT" ]]; then
-    echo "转换扩容后的镜像为 $OUTPUT_FORMAT 格式..."
-    qemu-img convert -O "$OUTPUT_FORMAT" "$RESIZED_NAME" "$OUTPUT_FILENAME"
-  else
-    mv "$RESIZED_NAME" "$OUTPUT_FILENAME"
-  fi
+  mv "$RESIZED_NAME" "$OUTPUT_FILENAME"
 fi
 
 echo "处理完成，输出文件: $OUTPUT_FILENAME"
 
-if [ "$COMPRESS_COMMAND" == "compress" ]; then
-  echo "压缩最终文件..."
-  7z a -mx=9 "${OUTPUT_FILENAME}.7z" "$OUTPUT_FILENAME"
-  rm -f "$OUTPUT_FILENAME"
-  echo "压缩完成"
-fi
+echo "压缩最终文件..."
+7z a -mx=9 "${OUTPUT_FILENAME}.7z" "$OUTPUT_FILENAME"
+rm -f "$OUTPUT_FILENAME"
+echo "压缩完成: ${OUTPUT_FILENAME}.7z"
