@@ -446,10 +446,9 @@ else
   echo "执行: $RESIZE_CMD \"$ORIGINAL_NAME\" \"$RESIZED_NAME\""
   $RESIZE_CMD "$ORIGINAL_NAME" "$RESIZED_NAME"
 
-  echo "转换为稀疏格式..."
-  qemu-img convert -O "$OUTPUT_FORMAT" -S 4k "$RESIZED_NAME" "$OUTPUT_FILENAME"
-
   echo "扩容完成！"
+
+  mv "$RESIZED_NAME" "$OUTPUT_FILENAME"
 fi
 
 echo "处理完成，输出文件: $OUTPUT_FILENAME"
