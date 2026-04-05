@@ -153,16 +153,17 @@ parse_size_to_bytes() {
   local size_str="$1"
   local size_num size_unit
   
-  if [[ "$size_str" =~ ^([0-9]+)([GMK])$ ]]; then
+  size_str="${size_str^^}"
+  
+  if [[ "$size_str" =~ ^([0-9]+)(B|KB|MB|GB|K|M|G)?$ ]]; then
     size_num=${BASH_REMATCH[1]}
     size_unit=${BASH_REMATCH[2]}
     case "$size_unit" in
-      G) echo $((size_num * 1073741824)) ;;
-      M) echo $((size_num * 1048576)) ;;
-      K) echo $((size_num * 1024)) ;;
+      G|GB) echo $((size_num * 1073741824)) ;;
+      M|MB) echo $((size_num * 1048576)) ;;
+      K|KB) echo $((size_num * 1024)) ;;
+      B|'') echo "$size_num" ;;
     esac
-  elif [[ "$size_str" =~ ^([0-9]+)$ ]]; then
-    echo "${BASH_REMATCH[1]}"
   else
     echo "0"
   fi
