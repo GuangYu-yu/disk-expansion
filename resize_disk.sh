@@ -415,15 +415,11 @@ else
   
   TOTAL_SIZE=$((ORIGINAL_SIZE + EXPAND_SIZE_BYTES))
   
-  RESIZED_NAME="stage2_${RANDOM_SUFFIX}.${OUTPUT_FORMAT}"
+  RESIZED_NAME="stage2_${RANDOM_SUFFIX}.qcow2"
   TEMP_FILES+=("$RESIZED_NAME")
   
   echo "创建新的磁盘镜像，大小为 ${TOTAL_SIZE} 字节（原始 ${ORIGINAL_SIZE} + 扩容 ${EXPAND_SIZE_BYTES}）..."
-  if [[ "$OUTPUT_FORMAT" == "qcow2" ]]; then
-    qemu-img create -f qcow2 -o preallocation=metadata "$RESIZED_NAME" "$TOTAL_SIZE"
-  else
-    qemu-img create -f "$OUTPUT_FORMAT" "$RESIZED_NAME" "$TOTAL_SIZE"
-  fi
+  qemu-img create -f qcow2 "$RESIZED_NAME" "$TOTAL_SIZE"
 
   RESIZE_CMD="virt-resize --expand $EXPAND_PARTITION"
   
@@ -452,9 +448,9 @@ else
   echo "执行: $RESIZE_CMD \"$ORIGINAL_NAME\" \"$RESIZED_NAME\""
   $RESIZE_CMD "$ORIGINAL_NAME" "$RESIZED_NAME"
 
-  echo "扩容完成！"
+  qemu-img convert -O "$OUTPUT_FORMAT" "$RESIZED_NAME" "$OUTPUT_FILENAME"
 
-  mv "$RESIZED_NAME" "$OUTPUT_FILENAME"
+  echo "扩容完成！"
 fi
 
 echo "处理完成，输出文件: $OUTPUT_FILENAME"
