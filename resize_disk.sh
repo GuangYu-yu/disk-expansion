@@ -16,26 +16,6 @@ cleanup() {
 
 trap cleanup EXIT
 
-get_disk_usage() {
-  local file="$1"
-  if [ -f "$file" ]; then
-    du -b "$file" 2>/dev/null | cut -f1 || stat -c %s "$file" 2>/dev/null || echo "unknown"
-  else
-    echo "0"
-  fi
-}
-
-print_file_info() {
-  local file="$1"
-  local label="$2"
-  if [ -f "$file" ]; then
-    local logical_size actual_size
-    logical_size=$(stat -c %s "$file" 2>/dev/null || stat -f %z "$file" 2>/dev/null || echo "unknown")
-    actual_size=$(get_disk_usage "$file")
-    echo "$label: 逻辑大小=$((logical_size / 1048576))MB, 实际占用=$((actual_size / 1048576))MB"
-  fi
-}
-
 IMAGE_SOURCE=$1
 OUTPUT_FILENAME=$2
 RESIZE_RULE=$3
@@ -146,7 +126,6 @@ fi
 
 ORIGINAL_NAME="$EXTRACTED_FILE"
 echo "解压完成，使用文件: $ORIGINAL_NAME"
-print_file_info "$ORIGINAL_NAME" "解压后文件"
 TEMP_FILES+=("$ORIGINAL_NAME")
 
 echo "验证文件..."
@@ -438,11 +417,7 @@ else
   TEMP_FILES+=("$RESIZED_NAME")
   
   echo "创建新的磁盘镜像，大小为 ${TOTAL_SIZE} 字节（原始 ${ORIGINAL_SIZE} + 扩容 ${EXPAND_SIZE_BYTES}）..."
-  if [[ "$OUTPUT_FORMAT" == "qcow2" ]]; then
-    qemu-img create -f qcow2 -o preallocation=metadata "$RESIZED_NAME" "$TOTAL_SIZE"
-  else
-    qemu-img create -f "$OUTPUT_FORMAT" "$RESIZED_NAME" "$TOTAL_SIZE"
-  fi
+  qemu-img create -f "$OUTPUT_FORMAT" "$RESIZED_NAME" "$TOTAL_SIZE"
 
   RESIZE_CMD="virt-resize --expand $EXPAND_PARTITION"
   
@@ -471,11 +446,9 @@ else
   echo "执行: $RESIZE_CMD \"$ORIGINAL_NAME\" \"$RESIZED_NAME\""
   $RESIZE_CMD "$ORIGINAL_NAME" "$RESIZED_NAME"
 
-  print_file_info "$RESIZED_NAME" "扩容后中间文件"
   echo "扩容完成！"
 
   mv "$RESIZED_NAME" "$OUTPUT_FILENAME"
-  print_file_info "$OUTPUT_FILENAME" "最终输出文件"
 fi
 
 echo "处理完成，输出文件: $OUTPUT_FILENAME"
