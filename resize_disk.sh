@@ -86,25 +86,25 @@ case "$ORIGINAL_NAME" in
   *.gz)
     echo "检测到 gzip 压缩，解压中..."
     EXTRACTED_FILE="${ORIGINAL_NAME%.gz}"
-    gunzip -c "$ORIGINAL_NAME" | dd of="$EXTRACTED_FILE" conv=sparse
+    gunzip -c "$ORIGINAL_NAME" 2>/dev/null | dd of="$EXTRACTED_FILE" conv=sparse || true
     rm -f "$ORIGINAL_NAME"
     ;;
   *.xz)
     echo "检测到 xz 压缩，解压中..."
     EXTRACTED_FILE="${ORIGINAL_NAME%.xz}"
-    xz -dc "$ORIGINAL_NAME" | dd of="$EXTRACTED_FILE" conv=sparse
+    xz -dc "$ORIGINAL_NAME" 2>/dev/null | dd of="$EXTRACTED_FILE" conv=sparse || true
     rm -f "$ORIGINAL_NAME"
     ;;
   *.bz2)
     echo "检测到 bzip2 压缩，解压中..."
     EXTRACTED_FILE="${ORIGINAL_NAME%.bz2}"
-    bzip2 -dc "$ORIGINAL_NAME" | dd of="$EXTRACTED_FILE" conv=sparse
+    bzip2 -dc "$ORIGINAL_NAME" 2>/dev/null | dd of="$EXTRACTED_FILE" conv=sparse || true
     rm -f "$ORIGINAL_NAME"
     ;;
   *.zip)
     echo "检测到 zip 压缩，解压中..."
     mkdir -p extracted
-    unzip "$ORIGINAL_NAME" -d extracted || true
+    unzip -q -o "$ORIGINAL_NAME" -d extracted || true
     EXTRACTED_FILE=$(find extracted -type f | while read -r f; do
       if is_valid_image "$f"; then
         echo "$f"
