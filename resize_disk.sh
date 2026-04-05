@@ -361,13 +361,11 @@ else
         fi
       fi
     else
-      if [[ "$rule" =~ ^([0-9]+)([GMK]?)$ ]]; then
-        size="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
-        EXPAND_SIZE_BYTES=$(parse_size_to_bytes "$size")
-        
+      EXPAND_SIZE_BYTES=$(parse_size_to_bytes "$rule")
+      if [ "$EXPAND_SIZE_BYTES" -gt 0 ]; then
         EXPAND_PARTITION=$(find_expand_partition)
         if [ -n "$EXPAND_PARTITION" ]; then
-          echo "规则: 自动选择分区 $EXPAND_PARTITION，扩容 $size"
+          echo "规则: 自动选择分区 $EXPAND_PARTITION，扩容 $rule"
         fi
       elif [[ "$rule" =~ ^([+=])(.+)$ ]]; then
         operator="${BASH_REMATCH[1]}"
