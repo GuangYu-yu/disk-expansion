@@ -214,12 +214,15 @@ else
   echo "检测 LVM..."
   HAS_LVM=false
   LV_LIST=""
+  set +e
   if virt-filesystems -a "$ORIGINAL_NAME" --lvs 2>/dev/null | grep -q .; then
+    set -e
     HAS_LVM=true
     LV_LIST=$(virt-filesystems -a "$ORIGINAL_NAME" --lvs 2>/dev/null)
     echo "检测到 LVM 逻辑卷："
     echo "$LV_LIST"
   fi
+  set -e
   
   FS_INFO=$(virt-filesystems -a "$ORIGINAL_NAME" -l 2>/dev/null)
   HEADER=$(echo "$FS_INFO" | head -n1)
