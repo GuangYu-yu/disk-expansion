@@ -127,27 +127,49 @@ declare -A PART_LABEL
 
 load_partition_info() {
     local image="$1"
-    local csv
+    local output
     
-    csv=$(virt-filesystems -a "$image" -l --csv 2>/dev/null) || {
+    output=$(virt-filesystems -a "$image" -l 2>/dev/null) || {
         log_error "无法获取镜像分区信息"
     }
-
-    while IFS=',' read -r name type vfs label mbr size parent; do
+    
+    local header
+    header=$(echo "$output" | head -n1)
+    
+    local col_name col_type col_vfs col_label col_size col_parent
+    col_name=$(echo "$header" | awk '{for(i=1;i<=NF;i++) if($i=="Name") print i; exit}')
+    col_type=$(echo "$header" | awk '{for(i=1;i<=NF;i++) if($i=="Type") print i; exit}')
+    col_vfs=$(echo "$header" | awk '{for(i=1;i<=NF;i++) if($i=="VFS") print i; exit}')
+    col_label=$(echo "$header" | awk '{for(i=1;i<=NF;i++) if($i=="Label") print i; exit}')
+    col_size=$(echo "$header" | awk '{for(i=1;i<=NF;i++) if($i=="Size") print i; exit}')
+    col_parent=$(echo "$header" | awk '{for(i=1;i<=NF;i++) if($i=="Parent") print i; exit}')
+    
+    while read -r line; do
+        [[ -z "$line" ]] && continue
+        
+        local name type vfs label size parent
+        name=$(echo "$line" | awk -v c="$col_name" '{print $c}')
+        type=$(echo "$line" | awk -v c="$col_type" '{print $c}')
+        vfs=$(echo "$line" | awk -v c="$col_vfs" '{print $c}')
+        label=$(echo "$line" | awk -v c="$col_label" '{print $c}')
+        size=$(echo "$line" | awk -v c="$col_size" '{print $c}')
+        parent=$(echo "$line" | awk -v c="$col_parent" '{print $c}')
+        
         [[ -z "$name" || "$name" == "Name" ]] && continue
+        
         PART_SIZE["$name"]="$size"
         PART_VFS["$name"]="$vfs"
         PART_TYPE["$name"]="$type"
         PART_LABEL["$name"]="$label"
-    done <<< "$csv"
-
+    done <<< "$output"
+    
     local lv_list
     lv_list=$(virt-filesystems -a "$image" --lvs 2>/dev/null) || true
     while read -r lv; do
         [[ -z "$lv" ]] && continue
         PART_TYPE["$lv"]="lvm"
         local lv_size
-        lv_size=$(virt-filesystems -a "$image" -l --csv 2>/dev/null | awk -F',' -v lv="$lv" '$1==lv {print $6}')
+        lv_size=$(echo "$output" | awk -v lv="$lv" '$1==lv {print $(NF-1)}')
         PART_SIZE["$lv"]="${lv_size:-0}"
     done <<< "$lv_list"
 }
