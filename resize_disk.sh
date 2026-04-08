@@ -7,6 +7,7 @@ export LIBGUESTFS_BACKEND=direct
 RANDOM_SUFFIX=$RANDOM
 TEMP_FILES=()
 CLEANUP_DONE=false
+ZRAM_DEVICE=""
 
 # -------------------- 清理函数 --------------------
 cleanup() {
@@ -17,6 +18,12 @@ cleanup() {
     for f in "${TEMP_FILES[@]}"; do
         [[ -n "$f" ]] && rm -rf "$f" 2>/dev/null || true
     done
+
+    if [[ -n "$ZRAM_DEVICE" ]] && [[ -e "$ZRAM_DEVICE" ]]; then
+        echo "[INFO] 释放 zram 设备: $ZRAM_DEVICE"
+        sudo zramctl --remove "$ZRAM_DEVICE" 2>/dev/null || true
+    fi
+
     CLEANUP_DONE=true
 }
 
@@ -90,15 +97,10 @@ parse_size_to_bytes() {
     fi
 }
 
-# 将大小字符串（可能是绝对值或百分比）转换为扩容字节数
-# 参数: size_spec  例如 "2G", "+10%", "=5G"
-#       current_bytes 当前分区大小（用于百分比计算）
-# 返回: 需要增加的字节数（已对齐到64K）
 calc_expand_bytes() {
     local spec="$1"
     local current_bytes="$2"
 
-    # 去掉前导 +/=
     local clean_spec="${spec#[+=]}"
 
     if [[ "$clean_spec" =~ ^([0-9]+)%$ ]]; then
@@ -118,24 +120,19 @@ calc_expand_bytes() {
 }
 
 # -------------------- 分区信息缓存模块 --------------------
-# 使用全局关联数组存储分区/LV 信息，避免重复解析
-declare -A PART_SIZE    # 分区/LV -> 字节大小
-declare -A PART_VFS     # 分区/LV -> 文件系统类型
-declare -A PART_TYPE    # 分区/LV -> 类型 (partition/lvm/...)
-declare -A PART_LABEL   # 分区/LV -> 标签
+declare -A PART_SIZE
+declare -A PART_VFS
+declare -A PART_TYPE
+declare -A PART_LABEL
 
 load_partition_info() {
     local image="$1"
     local csv
     
-    # 获取分区列表 (CSV格式)
     csv=$(virt-filesystems -a "$image" -l --csv 2>/dev/null) || {
         log_error "无法获取镜像分区信息"
     }
 
-    # 解析 CSV
-    # 列顺序: Name,Type,VFS,Label,MBR,Size,Parent
-    # 示例: /dev/sda1,partition,ext4,cloudimg-rootfs,-,2147483648,-
     while IFS=',' read -r name type vfs label mbr size parent; do
         [[ -z "$name" || "$name" == "Name" ]] && continue
         PART_SIZE["$name"]="$size"
@@ -144,36 +141,28 @@ load_partition_info() {
         PART_LABEL["$name"]="$label"
     done <<< "$csv"
 
-    # 获取 LVM 逻辑卷列表
     local lv_list
     lv_list=$(virt-filesystems -a "$image" --lvs 2>/dev/null) || true
     while read -r lv; do
         [[ -z "$lv" ]] && continue
-        # 确保 LV 被标记为 lvm 类型，方便后续判断
         PART_TYPE["$lv"]="lvm"
-        # 获取 LV 大小（通过 virt-filesystems -l 也会列出，但保险起见再次查询）
         local lv_size
         lv_size=$(virt-filesystems -a "$image" -l --csv 2>/dev/null | awk -F',' -v lv="$lv" '$1==lv {print $6}')
         PART_SIZE["$lv"]="${lv_size:-0}"
     done <<< "$lv_list"
 }
 
-# 判断是否为 LVM 逻辑卷
 is_lv() {
     local name="$1"
     [[ "${PART_TYPE[$name]}" == "lvm" ]]
 }
 
-# 获取分区大小（字节）
 get_partition_bytes() {
     local name="$1"
     echo "${PART_SIZE[$name]:-0}"
 }
 
 # -------------------- 自动分区选择策略 --------------------
-# 每个策略函数输出分区名（成功时返回0），无输出且返回1表示不匹配
-
-# 策略1: 根据标签白名单匹配
 strategy_by_label_whitelist() {
     local whitelist="root rootfs cloudimg-rootfs system linux"
     for name in "${!PART_LABEL[@]}"; do
@@ -185,11 +174,10 @@ strategy_by_label_whitelist() {
     return 1
 }
 
-# 策略2: 最大的非启动/EFI的ext4/xfs/btrfs分区
 strategy_largest_data_partition() {
     local candidates=()
     local exclude_vfs="swap vfat efi unknown"
-    local min_size=$((50 * 1024 * 1024))  # 50MB
+    local min_size=$((50 * 1024 * 1024))
     
     for name in "${!PART_TYPE[@]}"; do
         [[ "${PART_TYPE[$name]}" != "partition" ]] && continue
@@ -198,7 +186,6 @@ strategy_largest_data_partition() {
         local label="${PART_LABEL[$name],,}"
         local size="${PART_SIZE[$name]}"
         
-        # 排除条件
         [[ " $exclude_vfs " =~ " $vfs " ]] && continue
         [[ "$label" =~ boot|efi|esp ]] && continue
         [[ "$size" -lt "$min_size" ]] && continue
@@ -207,14 +194,12 @@ strategy_largest_data_partition() {
     done
     
     if [[ ${#candidates[@]} -gt 0 ]]; then
-        # 按大小降序，返回第一个
         printf '%s\n' "${candidates[@]}" | sort -t':' -k2 -nr | head -n1 | cut -d':' -f1
         return 0
     fi
     return 1
 }
 
-# 策略3: 最大的非swap非vfat分区（放宽条件）
 strategy_largest_non_swap() {
     local candidates=()
     local exclude_vfs="swap vfat"
@@ -239,7 +224,6 @@ strategy_largest_non_swap() {
     return 1
 }
 
-# 自动选择扩容目标分区
 select_auto_target() {
     local strategies=(
         strategy_by_label_whitelist
@@ -256,21 +240,14 @@ select_auto_target() {
 }
 
 # -------------------- 规则解析模块 --------------------
-# 规则对象存储格式: "target|operator|value_spec|bytes"
-# operator: "+" (增加), "=" (设为), "fill" (填满剩余), "ignore" (忽略)
-# value_spec: 原始规格字符串，如 "2G", "10%"
-# bytes: 预计算的增加字节数（对于 fill 为0，后续计算）
-
 parse_single_rule() {
     local raw="$1"
-    raw=$(echo "$raw" | xargs)  # 去除首尾空格
+    raw=$(echo "$raw" | xargs)
 
     local target operator value_spec bytes
 
-    # 使用模式匹配统一处理
     case "$raw" in
         0)
-            # 特殊规则：仅格式转换
             echo "none|convert|0|0"
             return
             ;;
@@ -300,35 +277,29 @@ parse_single_rule() {
             target="auto"
             ;;
         *)
-            # 纯数字+单位，自动选择分区扩容
             value_spec="$raw"
             operator="+"
             target="auto"
             ;;
     esac
 
-    # 输出初始规则（bytes 稍后计算）
     echo "$target|$operator|$value_spec|0"
 }
 
-# 补全规则：将 "auto" 目标替换为实际分区，并计算扩容字节数
 resolve_rule() {
     local rule="$1"
     IFS='|' read -r target op val_spec _ <<< "$rule"
 
-    # 特殊规则：仅转换
     if [[ "$target" == "none" && "$op" == "convert" ]]; then
         echo "$rule"
         return
     fi
 
-    # 自动选择目标
     if [[ "$target" == "auto" ]]; then
         target=$(select_auto_target)
         log_info "自动选择扩容目标: $target"
     fi
 
-    # 检查目标是否存在
     if [[ -z "${PART_SIZE[$target]}" ]]; then
         log_error "目标 '$target' 在镜像中不存在"
     fi
@@ -338,7 +309,6 @@ resolve_rule() {
 
     case "$op" in
         fill)
-            # fill 不在此计算，由后续的 --expand 参数处理
             expand_bytes=0
             ;;
         +|*)
@@ -350,6 +320,24 @@ resolve_rule() {
     esac
 
     echo "$target|$op|$val_spec|$expand_bytes"
+}
+
+# -------------------- ZRAM 初始化函数 --------------------
+init_zram() {
+    local required_size_bytes="$1"
+    local size_gb=$(( (required_size_bytes + 1073741823) / 1073741824 + 1 ))
+
+    log_info "创建 zram 设备，虚拟大小: ${size_gb}G"
+
+    sudo modprobe zram 2>/dev/null || true
+
+    ZRAM_DEVICE=$(sudo zramctl --find --size "${size_gb}G" --algorithm zstd)
+    log_info "zram 设备: $ZRAM_DEVICE"
+
+    local mem_limit_bytes=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') * 1024 * 80 / 100 ))
+    echo "$mem_limit_bytes" | sudo tee "/sys/block/${ZRAM_DEVICE##*/}/mem_limit" >/dev/null
+
+    echo "$ZRAM_DEVICE"
 }
 
 # -------------------- 主处理流程 --------------------
@@ -430,10 +418,12 @@ main() {
 
     # ---------- 5. 规则为0时的快速路径 ----------
     if [[ "$RESIZE_RULE" == "0" ]]; then
-        log_info "规则为0，仅执行格式转换"
-        qemu-img convert -O "$OUTPUT_FORMAT" "$ORIGINAL_NAME" "$OUTPUT_FILENAME"
-        log_info "格式转换完成: $OUTPUT_FILENAME"
-        compress_output
+        log_info "规则为0，仅执行格式转换并压缩"
+        if [[ -f "$OUTPUT_FILENAME" ]]; then
+            rm -f "$OUTPUT_FILENAME"
+        fi
+        qemu-img convert -O raw "$ORIGINAL_NAME" /dev/stdout | zstd -19 -T0 -o "${OUTPUT_FILENAME}.zst"
+        log_info "格式转换并压缩完成: ${OUTPUT_FILENAME}.zst"
         return
     fi
 
@@ -441,10 +431,8 @@ main() {
     log_info "分析镜像分区布局..."
     load_partition_info "$ORIGINAL_NAME"
 
-    # 显示分区信息表格（便于用户确认）
     virt-filesystems -a "$ORIGINAL_NAME" -l
 
-    # 原始镜像大小
     ORIGINAL_SIZE=$(qemu-img info "$ORIGINAL_NAME" 2>/dev/null | grep "virtual size" | sed -E 's/.*\(([0-9]+) bytes\).*/\1/')
     [[ -z "$ORIGINAL_SIZE" ]] && ORIGINAL_SIZE=$(stat -c %s "$ORIGINAL_NAME" 2>/dev/null || stat -f %z "$ORIGINAL_NAME")
     log_info "原始镜像虚拟大小: $ORIGINAL_SIZE 字节"
@@ -472,7 +460,6 @@ main() {
                 ;;
         esac
 
-        # 记录 LV 扩容请求
         if is_lv "$target"; then
             LV_EXPAND_TARGET="$target"
         fi
@@ -485,20 +472,17 @@ main() {
     fi
     log_info "新镜像大小: $TOTAL_SIZE 字节 (增加 $TOTAL_EXPAND 字节)"
 
-    # ---------- 9. 创建新镜像 ----------
-    RESIZED_NAME="stage2_${RANDOM_SUFFIX}.${OUTPUT_FORMAT}"
-    TEMP_FILES+=("$RESIZED_NAME")
-    qemu-img create -f "$OUTPUT_FORMAT" "$RESIZED_NAME" "$TOTAL_SIZE"
+    # ---------- 9. 初始化 zram 设备 ----------
+    log_info "初始化 zram 设备..."
+    ZRAM_DEVICE=$(init_zram "$TOTAL_SIZE")
 
     # ---------- 10. 构建 virt-resize 参数 ----------
     resize_args=()
     
-    # 处理 fill 目标
     if [[ -n "$FILL_TARGET" ]]; then
         resize_args+=( --expand "$FILL_TARGET" )
     fi
 
-    # 处理其他调整规则
     for rule in "${RESOLVED_RULES[@]}"; do
         IFS='|' read -r target op val_spec bytes <<< "$rule"
         case "$op" in
@@ -511,7 +495,6 @@ main() {
         esac
     done
 
-    # 忽略 swap 分区（加速）
     local swap_list=()
     for name in "${!PART_VFS[@]}"; do
         [[ "${PART_VFS[$name],,}" == "swap" ]] && swap_list+=("$name")
@@ -523,7 +506,6 @@ main() {
         done
     fi
 
-    # LVM 扩容支持
     if [[ -n "$LV_EXPAND_TARGET" ]]; then
         resize_args+=( --LV-expand "$LV_EXPAND_TARGET" )
         log_info "将扩容 LVM 逻辑卷: $LV_EXPAND_TARGET"
@@ -531,12 +513,15 @@ main() {
         log_warn "检测到 LVM 但未指定 LV 扩容规则，仅扩容 PV"
     fi
 
-    # ---------- 11. 执行扩容 ----------
-    log_info "执行: virt-resize ${resize_args[*]} $ORIGINAL_NAME $RESIZED_NAME"
-    virt-resize "${resize_args[@]}" "$ORIGINAL_NAME" "$RESIZED_NAME"
+    # ---------- 11. 执行 virt-resize，输出到 zram ----------
+    log_info "执行: virt-resize ${resize_args[*]} $ORIGINAL_NAME $ZRAM_DEVICE"
+    sudo virt-resize "${resize_args[@]}" "$ORIGINAL_NAME" "$ZRAM_DEVICE"
 
-    mv "$RESIZED_NAME" "$OUTPUT_FILENAME"
-    log_info "扩容完成，输出文件: $OUTPUT_FILENAME"
+    # ---------- 12. 从 zram 读取数据，流式压缩输出 ----------
+    log_info "从 zram 导出并压缩 (zstd -19 -T0) 到 ${OUTPUT_FILENAME}.zst"
+    sudo dd if="$ZRAM_DEVICE" bs=1M status=progress | zstd -19 -T0 -o "${OUTPUT_FILENAME}.zst"
+    
+    log_info "扩容并压缩完成，输出文件: ${OUTPUT_FILENAME}.zst"
 }
 
 # -------------------- 入口 --------------------
