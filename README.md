@@ -5,7 +5,7 @@
 
 ## 📋 项目简介
 
-这是一个磁盘扩容自动化工具，扩展虚拟磁盘容量或格式转换
+这是一个磁盘扩容自动化工具，能够一键完成各种磁盘的容量扩展或格式转换。它封装了 qemu-img、virt-resize 等底层工具，提供友好的命令行接口和智能的自动分区检测功能，适用于云镜像定制、虚拟机磁盘调整、格式迁移等场景。
 
 ## ✨ 功能特性
 
@@ -30,8 +30,7 @@
 |                | 扩容为 0                                      | 跳过扩容操作，仅格式转换                                |
 |                | LVM 支持                                     | 支持 LVM 逻辑卷扩容                                |
 | **格式转换**       | qemu-img convert                           | 可在扩容后将镜像转换为 raw/qcow2/vmdk/vdi/vhd/vhdx/qed 等格式 |
-| **压缩输出**       | 7z 压缩                                      | 压缩最终镜像，压缩等级最大（-mx=9）                        |
-| **清理操作**       | 临时文件                                       | trap 自动清理所有临时文件                             |
+| **清理操作**       | 临时文件                                    | trap 自动清理所有临时文件                             |
 
 ## 📁 项目结构
 
@@ -60,12 +59,12 @@ disk-expansion/
 | `2G` | 自动选择分区，扩容 2G |
 | `500M` | 自动选择分区，扩容 500M |
 | `+10%` | 自动选择分区，增加 10% |
-| `=10G` | 自动选择分区，设为 10G |
+| `=10G` | 自动选择分区，增至 10G |
 | `/dev/sda2` | 指定分区填满剩余空间 |
 | `/dev/sda2+2G` | 分区增加 2G |
-| `/dev/sda2=10G` | 分区设为 10G |
+| `/dev/sda2=10G` | 分区增至 10G |
 | `/dev/sda2+10%` | 分区增加 10% |
-| `/dev/vg/lv+2G` | LVM 逻辑卷增加 2G |
+| `/dev/vg_name/lv_name+2G` | LVM 逻辑卷增加 2G（自动调用 --LV-expand） |
 | `/dev/sda1+100M,/dev/sda2` | 多分区调整（逗号分隔） |
 
 ### 示例
@@ -85,12 +84,36 @@ disk-expansion/
 
 # LVM 逻辑卷扩容
 ./resize_disk.sh ./image.img output.img /dev/vg0/root+10G
+
+# 多分区组合调整
+./resize_disk.sh ./image.img output.img "/dev/sda1+200M,/dev/sda2"
 ```
 
 ### GitHub Actions
 
-1. **Fork 此仓库**
-2. **手动触发工作流**:
-   - 进入 GitHub Actions 页面
-   - 选择 "Resize Disk" 工作流
-   - 点击 "Run workflow" 并输入参数
+1. **Fork 此仓库**到你的 GitHub 账户
+2. **进入 Actions 标签页**，选择 "Resize Disk" 工作流
+3. **点击 "Run workflow"**，填写参数：
+   - 镜像来源（URL 或本地路径）
+   - 输出文件名
+   - 扩容规则
+4. **运行完成后**，从 Artifacts 下载处理后的镜像文件
+
+> ⚠️ 注意：GitHub Actions 的存储和运行时间有限，超大镜像建议本地执行。
+
+### 环境依赖
+
+脚本运行需要以下工具：
+
+| 工具 | 包名（Ubuntu/Debian） | 包名（CentOS/RHEL） |
+|------|----------------------|---------------------|
+| qemu-img | qemu-utils | qemu-img |
+| virt-resize | libguestfs-tools | libguestfs-tools |
+| wget/unzip/xz/bzip2 | wget, unzip, xz-utils, bzip2 | wget, unzip, xz, bzip2 |
+| 7z（可选） | p7zip-full | p7zip |
+
+### 注意事项
+
+1. **安全优先**：扩容操作不会修改原始镜像，所有操作均在副本上进行
+2. **Windows 镜像**：扩容后首次启动可能会触发磁盘检查（chkdsk），属正常现象
+3. **LVM 镜像**：建议显式指定逻辑卷进行扩容，否则只扩容 PV 而 LV 不会自动扩展

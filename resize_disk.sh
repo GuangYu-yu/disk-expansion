@@ -537,16 +537,6 @@ main() {
 
     mv "$RESIZED_NAME" "$OUTPUT_FILENAME"
     log_info "扩容完成，输出文件: $OUTPUT_FILENAME"
-
-    # ---------- 12. 压缩 ----------
-    compress_output
-}
-
-compress_output() {
-    log_info "压缩最终文件..."
-    7z a -mx=9 "${OUTPUT_FILENAME}.7z" "$OUTPUT_FILENAME"
-    rm -f "$OUTPUT_FILENAME"
-    log_info "压缩完成: ${OUTPUT_FILENAME}.7z"
 }
 
 # -------------------- 入口 --------------------

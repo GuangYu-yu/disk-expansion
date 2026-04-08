@@ -29,12 +29,13 @@ jobs:
         run: |
           chmod +x ./resize_disk.sh
           sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.output_filename }}" "${{ github.event.inputs.resize_rule }}"
-
           ls -lah
-          if [ ! -f "${{ github.event.inputs.output_filename }}.7z" ]; then
-            echo "错误：压缩后的文件 ${{ github.event.inputs.output_filename }}.7z 未找到！"
-            exit 1
-          fi
+
+      - name: 压缩镜像
+        run: |
+          7z a -mx=9 "${{ github.event.inputs.output_filename }}.7z" "${{ github.event.inputs.output_filename }}"
+          rm -f "${{ github.event.inputs.output_filename }}"
+          ls -lah
 
       - name: 上传处理并压缩后的镜像
         uses: actions/upload-artifact@v4
