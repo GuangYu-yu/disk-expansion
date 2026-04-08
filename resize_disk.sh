@@ -322,7 +322,7 @@ else
       return
     fi
     
-    result=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v label_col="$COL_LABEL" -v size_col="$COL_SIZE" \
+    result=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v type_col="$COL_TYPE" -v label_col="$COL_LABEL" -v size_col="$COL_SIZE" \
       -v vfs_bl="$vfs_blacklist" -v min_sz="$min_size" -v first_part="$first_part" -v first_protect="$first_part_protect" '
       BEGIN {
         split(vfs_bl, vfs_arr, " ")
@@ -352,7 +352,7 @@ else
       return
     fi
     
-    result=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v size_col="$COL_SIZE" -v min_sz="$min_size" '
+    result=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v type_col="$COL_TYPE" -v size_col="$COL_SIZE" -v min_sz="$min_size" '
       NR>1 && $type_col == "partition" {
         vfs = tolower($vfs_col)
         size = $size_col + 0
@@ -362,13 +362,13 @@ else
         exit
       }
     ')
-    
+
     if [ -n "$result" ]; then
       echo "$result"
       return
     fi
-    
-    result=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v size_col="$COL_SIZE" -v min_sz="$min_size" '
+
+    result=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v type_col="$COL_TYPE" -v size_col="$COL_SIZE" -v min_sz="$min_size" '
       NR>1 && $type_col == "partition" {
         vfs = tolower($vfs_col)
         size = $size_col + 0
