@@ -228,7 +228,7 @@ else
   COL_VFS=$(echo "$HEADER" | awk '{for(i=1;i<=NF;i++) if($i=="VFS") print i}')
   COL_LABEL=$(echo "$HEADER" | awk '{for(i=1;i<=NF;i++) if($i=="Label") print i}')
   COL_SIZE=$(echo "$HEADER" | awk '{for(i=1;i<=NF;i++) if($i=="Size") print i}')
-  COL_TYPE=$(echo "$HEADER" | awk '{for(i=1;i<=NF;i++) if($i=="Type") print i}')
+  # COL_TYPE不再作为严格过滤条件
   
   RESIZE_OPTS=""
   EXPAND_PARTITION=""
@@ -241,6 +241,9 @@ else
   }
   
   find_expand_partition() {
+    # ==========================================
+    # 第一步：LVM 分支
+    # ==========================================
     local pv_list
     pv_list=$(virt-filesystems -a "$ORIGINAL_NAME" --pv 2>/dev/null)
     
@@ -258,9 +261,10 @@ else
       local pv
       pv=$(echo "$pv_list" | head -n1)
       
+      # 检查该 PV 是否在分区列表中（去掉严格的Type校验）
       local is_part
-      is_part=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v type_col="$COL_TYPE" -v p="$pv" '
-        NR>1 && $name_col == p && $type_col == "partition" {print 1}
+      is_part=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v p="$pv" '
+        NR>1 && $name_col == p {print 1; exit}
       ')
       
       if [ "$is_part" = "1" ]; then
@@ -268,24 +272,95 @@ else
         return
       fi
       
-      local lvm_devs
-      lvm_devs=$(echo "$FS_INFO" | awk -v vfs_col="$COL_VFS" -v name_col="$COL_NAME" '
-        NR>1 && $vfs_col == "lvm" {print $name_col}
-      ')
-      
-      echo "$FS_INFO" | awk -v type_col="$COL_TYPE" -v name_col="$COL_NAME" -v size_col="$COL_SIZE" -v lvm="$lvm_devs" '
-        BEGIN {
-          split(lvm, arr, "\n")
-          for (i in arr) map[arr[i]] = 1
+      # 若不是分区（如整盘），找出所有 vfs 包含 lvm 的记录，返回最大的
+      echo "$FS_INFO" | awk -v vfs_col="$COL_VFS" -v name_col="$COL_NAME" -v size_col="$COL_SIZE" '
+        NR>1 && tolower($vfs_col) ~ /lvm/ {
+          print $name_col, $size_col
         }
-        NR>1 && $type_col == "partition" && map[$name_col] {print $name_col, $size_col}
       ' | sort -k2 -n | tail -n1 | awk '{print $1}'
+      
       return
     fi
     
-    echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v size_col="$COL_SIZE" '
-      NR>1 && $vfs_col !~ /swap|unknown|efi/ && $name_col !~ /boot/ {print $name_col, $size_col}
-    ' | sort -k2 -n | tail -n1 | awk '{print $1}'
+    # ==========================================
+    # 第二步：普通分区分支（三层 fallback + 顺序优先）
+    # ==========================================
+    echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v label_col="$COL_LABEL" -v size_col="$COL_SIZE" '
+      BEGIN {
+        part_idx = 0
+      }
+      # 去掉了 $type_col == "partition" 的限制，改为只要 Name 以 /dev/ 开头即视为有效设备行
+      NR>1 && $name_col ~ /^\/dev\// {
+        part_idx++
+        names[part_idx] = $name_col
+        vfs[part_idx] = tolower($vfs_col)
+        
+        # 归一化 Label
+        lbl = tolower($label_col)
+        gsub(/^["'"'"'[:space:]]+|["'"'"'[:space:]]+$/, "", lbl)
+        labels[part_idx] = lbl
+        
+        sizes[part_idx] = $size_col + 0
+      }
+      
+      END {
+        if (part_idx == 0) exit
+        
+        # ----------------------------------------
+        # 第一层：Label 精准命中
+        # ----------------------------------------
+        for (i = 1; i <= part_idx; i++) {
+          if (labels[i] == "cloudimg-rootfs" || labels[i] == "rootfs" || labels[i] == "root") {
+            print names[i]
+            exit
+          }
+        }
+        
+        # ----------------------------------------
+        # 第二层：顺序优先 + 首分区保护
+        # ----------------------------------------
+        for (i = 1; i <= part_idx; i++) {
+          v = vfs[i]
+          s = sizes[i]
+          is_first = (i == 1)
+          
+          if (v ~ /^(ext4|ext3|xfs|btrfs)$/) {
+            # 容量 > 100MB
+            if (s > 104857600) {
+              # 第一个分区 且 容量 <= 1GB 的跳过
+              if (!(is_first && s <= 1073741824)) {
+                print names[i]
+                exit
+              }
+            }
+          }
+        }
+        
+        # ----------------------------------------
+        # 第三层：宽松兜底（第一阶段）
+        # ----------------------------------------
+        for (i = 1; i <= part_idx; i++) {
+          v = vfs[i]
+          s = sizes[i]
+          if (v ~ /^(ext4|ext3|xfs|btrfs)$/ && v != "vfat" && v != "swap" && s > 52428800) {
+            print names[i]
+            exit
+          }
+        }
+        
+        # ----------------------------------------
+        # 第三层：宽松兜底（第二阶段）
+        # ----------------------------------------
+        for (i = 1; i <= part_idx; i++) {
+          v = vfs[i]
+          s = sizes[i]
+          if (v != "vfat" && v != "swap" && s > 52428800) {
+            print names[i]
+            exit
+          }
+        }
+      }
+    '
   }
   
   IFS=',' read -ra RULES <<< "$RESIZE_RULE"
