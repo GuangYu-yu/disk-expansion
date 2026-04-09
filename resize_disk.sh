@@ -425,7 +425,7 @@ for i in "${!RULES[@]}"; do
   else
     # 非设备路径规则（自动选择）
     # 纯数字带可选单位，如 2G（表示增加指定大小）
-    if [[ "$rule" =~ ^[0-9]+[KMGT]?$ ]]; then
+    if [[ "$rule" =~ ^[0-9]+[KMGTkmgt]?$ ]]; then
       size_bytes=$(parse_size_to_bytes "$rule")
       if [ "$size_bytes" -gt 0 ]; then
         EXPAND_PARTITION=$(find_expand_partition)
