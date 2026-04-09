@@ -214,15 +214,12 @@ else
   echo "检测 LVM..."
   HAS_LVM=false
   LV_LIST=""
-  set +e
   if virt-filesystems -a "$ORIGINAL_NAME" --lvs 2>/dev/null | grep -q .; then
-    set -e
     HAS_LVM=true
     LV_LIST=$(virt-filesystems -a "$ORIGINAL_NAME" --lvs 2>/dev/null)
     echo "检测到 LVM 逻辑卷："
     echo "$LV_LIST"
   fi
-  set -e
   
   FS_INFO=$(virt-filesystems -a "$ORIGINAL_NAME" -l 2>/dev/null)
   HEADER=$(echo "$FS_INFO" | head -n1)
@@ -286,108 +283,9 @@ else
       return
     fi
     
-    local label_whitelist="root rootfs cloudimg-rootfs system linux"
-    local vfs_blacklist="swap vfat efi unknown"
-    local min_size=52428800
-    local first_part_protect=209715200
-    
-    local partitions
-    partitions=$(echo "$FS_INFO" | awk -v type_col="$COL_TYPE" -v name_col="$COL_NAME" '
-      NR>1 && $type_col == "partition" {print $name_col}
-    ')
-    
-    if [ -z "$partitions" ]; then
-      return 1
-    fi
-    
-    local first_part
-    first_part=$(echo "$partitions" | head -n1)
-    
-    local result
-    result=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v label_col="$COL_LABEL" -v wl="$label_whitelist" '
-      BEGIN {
-        split(wl, arr, " ")
-        for (i in arr) whitelist[arr[i]] = 1
-      }
-      NR>1 {
-        label = $label_col
-        gsub(/^[ \t]+|[ \t]+$/, "", label)
-        label = tolower(label)
-        if (whitelist[label]) {
-          print $name_col
-          exit
-        }
-      }
-    ')
-    
-    if [ -n "$result" ]; then
-      echo "$result"
-      return
-    fi
-    
-    result=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v type_col="$COL_TYPE" -v label_col="$COL_LABEL" -v size_col="$COL_SIZE" \
-      -v vfs_bl="$vfs_blacklist" -v min_sz="$min_size" -v first_part="$first_part" -v first_protect="$first_part_protect" '
-      BEGIN {
-        split(vfs_bl, vfs_arr, " ")
-        for (i in vfs_arr) vfs_blacklist_map[vfs_arr[i]] = 1
-      }
-      NR>1 && $type_col == "partition" {
-        name = $name_col
-        vfs = tolower($vfs_col)
-        size = $size_col + 0
-        
-        label = $label_col
-        gsub(/^[ \t]+|[ \t]+$/, "", label)
-        label_lower = tolower(label)
-        
-        if (vfs_blacklist_map[vfs]) next
-        if (label_lower ~ /boot|efi|esp/) next
-        if (size <= min_sz) next
-        if (name == first_part && size <= first_protect) next
-        
-        print name
-        exit
-      }
-    ')
-    
-    if [ -n "$result" ]; then
-      echo "$result"
-      return
-    fi
-    
-    result=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v type_col="$COL_TYPE" -v size_col="$COL_SIZE" -v min_sz="$min_size" '
-      NR>1 && $type_col == "partition" {
-        vfs = tolower($vfs_col)
-        size = $size_col + 0
-        if (vfs != "ext4" && vfs != "xfs" && vfs != "btrfs") next
-        if (size <= min_sz) next
-        print $name_col
-        exit
-      }
-    ')
-
-    if [ -n "$result" ]; then
-      echo "$result"
-      return
-    fi
-
-    result=$(echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v type_col="$COL_TYPE" -v size_col="$COL_SIZE" -v min_sz="$min_size" '
-      NR>1 && $type_col == "partition" {
-        vfs = tolower($vfs_col)
-        size = $size_col + 0
-        if (vfs == "swap" || vfs == "vfat") next
-        if (size <= min_sz) next
-        print $name_col
-        exit
-      }
-    ')
-    
-    if [ -n "$result" ]; then
-      echo "$result"
-      return
-    fi
-    
-    return 1
+    echo "$FS_INFO" | awk -v name_col="$COL_NAME" -v vfs_col="$COL_VFS" -v size_col="$COL_SIZE" '
+      NR>1 && $vfs_col !~ /swap|unknown|efi/ && $name_col !~ /boot/ {print $name_col, $size_col}
+    ' | sort -k2 -n | tail -n1 | awk '{print $1}'
   }
   
   IFS=',' read -ra RULES <<< "$RESIZE_RULE"
