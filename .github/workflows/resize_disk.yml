@@ -4,41 +4,51 @@ on:
   workflow_dispatch:
     inputs:
       image_url:
-        description: '原始镜像 URL'
+        description: '原始镜像（URL 或本地路径）'
         required: true
       output_filename:
-        description: '输出文件名'
+        description: '输出文件名（支持格式转换）'
         required: true
       resize_rule:
         description: '扩容规则'
         required: true
+      free_space:
+        description: '释放 Action 空间'
+        type: boolean
+        default: false
 
 jobs:
-  resize_squashfs:
+  resize:
     runs-on: ubuntu-latest
     steps:
+      - name: 释放 Action 空间
+        if: ${{ github.event.inputs.free_space == 'true' }}
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: false
+
       - name: 检出代码
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: 安装依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-utils p7zip-full parted libguestfs-tools
+          sudo apt-get install -y qemu-utils libguestfs-tools curl xz-utils bzip2 zstd unzip
 
-      - name: 执行处理
+      - name: 执行扩容
         run: |
           chmod +x ./resize_disk.sh
           sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.output_filename }}" "${{ github.event.inputs.resize_rule }}"
           ls -lah
 
-      - name: 压缩镜像
-        run: |
-          7z a -mx=9 "${{ github.event.inputs.output_filename }}.7z" "${{ github.event.inputs.output_filename }}"
-          rm -f "${{ github.event.inputs.output_filename }}"
-          ls -lah
-
-      - name: 上传处理并压缩后的镜像
+      - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event.inputs.output_filename }}.7z
-          path: ${{ github.event.inputs.output_filename }}.7z
+          name: ${{ github.event.inputs.output_filename }}
+          path: ${{ github.event.inputs.output_filename }}

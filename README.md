@@ -1,56 +1,28 @@
-# 🖥️ 磁盘扩容工具包
+# Disk Expansion Tool
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/GuangYu-yu/disk-expansion)
-[![zread](https://img.shields.io/badge/Ask_Zread-_.svg?style=flat&color=00b0aa&labelColor=000000&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTQuOTYxNTYgMS42MDAxSDIuMjQxNTZDMS44ODgxIDEuNjAwMSAxLjYwMTU2IDEuODg2NjQgMS42MDE1NiAyLjI0MDFWNC45NjAxQzEuNjAxNTYgNS4zMTM1NiAxLjg4ODEgNS42MDAxIDIuMjQxNTYgNS42MDAxSDQuOTYxNTZDNS4zMTUwMiA1LjYwMDEgNS42MDE1NiA1LjMxMzU2IDUuNjAxNTYgNC45NjAxVjIuMjQwMUM1LjYwMTU2IDEuODg2NjQgNS4zMTUwMiAxLjYwMDEgNC45NjE1NiAxLjYwMDFaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00Ljk2MTU2IDEwLjM5OTlIMi4yNDE1NkMxLjg4ODEgMTAuMzk5OSAxLjYwMTU2IDEwLjY4NjQgMS42MDE1NiAxMS4wMzk5VjEzLjc1OTlDMS42MDE1NiAxNC4xMTM0IDEuODg4MSAxNC4zOTk5IDIuMjQxNTYgMTQuMzk5OUg0Ljk2MTU2QzUuMzE1MDIgMTQuMzk5OSA1LjYwMTU2IDE0LjExMzQgNS42MDE1NiAxMy43NTk5VjExLjAzOTlDNS42MDE1NiAxMC42ODY0IDUuMzE1MDIgMTAuMzk5OSA0Ljk2MTU2IDEwLjM5OTlaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik0xMy43NTg0IDEuNjAwMUgxMS4wMzg0QzEwLjY4NSAxLjYwMDEgMTAuMzk4NCAxLjg4NjY0IDEwLjM5ODQgMi4yNDAxVjQuOTYwMUMxMC4zOTg0IDUuMzEzNTYgMTAuNjg1IDUuNjAwMSAxMS4wMzg0IDUuNjAwMUgxMy43NTg0QzE0LjExMTkgNS42MDAxIDE0LjM5ODQgNS4zMTM1NiAxNC4zOTg0IDQuOTYwMVYyLjI0MDFDMTQuMzk4NCAxLjg4NjY0IDE0LjExMTkgMS42MDAxIDEzLjc1ODQgMS42MDAxWiIgZmlsbD0iI2ZmZiIvPgo8cGF0aCBkPSJNNCAxMkwxMiA0TDQgMTJaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00IDEyTDEyIDQiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K&logoColor=ffffff)](https://zread.ai/GuangYu-yu/disk-expansion)
-[![Shell Script](https://img.shields.io/badge/Shell-Bash-blue.svg)](https://www.gnu.org/software/bash/)
+虚拟磁盘镜像扩容工具，支持从 URL 或本地路径获取镜像，自动/手动选择分区进行扩容。
 
-## 📋 项目简介
+## 功能特性
 
-这是一个磁盘扩容自动化工具，能够一键完成各种磁盘的容量扩展或格式转换。它封装了 qemu-img、virt-resize 等底层工具，提供友好的命令行接口和智能的自动分区检测功能，适用于云镜像定制、虚拟机磁盘调整、格式迁移等场景。
+- **流式处理**：峰值磁盘占用低
+- **多种压缩格式**：支持 `gz`、`xz`、`bz2`、`zst`、`zip`
+- **多种磁盘格式**：支持 `qcow2`、`raw`、`vmdk`、`vdi`、`vhd`、`vhdx`、`qed`、`luks`
+- **智能识别**：自动识别 root 分区和 LVM 结构
+- **灵活扩容**：支持自动选择分区或手动指定
 
-## ✨ 功能特性
-
-- 🚀 **一键扩容**：自动化完成磁盘扩容全流程
-- 📊 **智能检测**：自动识别磁盘类型和文件系统
-
-| 功能模块           | 子功能                                    | 说明                                          |
-| -------------- | -------------------------------------- | ------------------------------------------- |
-| **输入镜像获取**     | 本地文件                                       | 支持任意存在的本地文件                                 |
-|                | URL 下载                                     | 使用 wget 下载远程镜像，支持重试和超时                      |
-| **解压缩**        | gzip (.gz)                                 | 自动解压，保持稀疏文件                                 |
-|                | bzip2 (.bz2)                               | 自动解压，保持稀疏文件                                 |
-|                | xz (.xz)                                   | 自动解压，保持稀疏文件                                 |
-|                | zip (.zip)                                 | 自动解压，提取第一个有效镜像                              |
-|                | 未识别压缩/无压缩                                  | 当作原文件处理                                     |
-| **镜像格式检测与转换**  | raw                                        | 原生支持，可扩容                                    |
-|                | qcow2/vmdk/vdi/vhd/vhdx/qed/luks/hdd        | 支持多种格式转换                                    |
-|                | 未识别格式                                  | 可能无法处理，需要人工确认                               |
-| **扩容**         | qemu-img + virt-resize                      | 支持指定大小（K/M/G）、百分比（%）、增至指定大小（=）              |
-|                | 自动选择分区                                     | 自动检测最大非 swap 分区进行扩容                         |
-|                | 指定分区                                       | 可手动指定要扩容的分区                                 |
-|                | 扩容为 0                                      | 跳过扩容操作，仅格式转换                                |
-|                | LVM 支持                                     | 支持 LVM 逻辑卷扩容                                |
-| **格式转换**       | qemu-img convert                           | 可在扩容后将镜像转换为 raw/qcow2/vmdk/vdi/vhd/vhdx/qed 等格式 |
-| **清理操作**       | 临时文件                                    | trap 自动清理所有临时文件                             |
-
-## 📁 项目结构
-
-```
-disk-expansion/
-├── 📜 resize_disk.sh          # 主扩容脚本
-├── 📁 .github/
-│   └── 📁 workflows/
-│       └── 📜 resize_disk.yml    # GitHub Actions 扩容工作流
-└── 📜 README.md             # 项目文档
-```
-
-## 🚀 使用方法
-
-### 命令行
+## 用法
 
 ```bash
-./resize_disk.sh <镜像URL或本地文件路径> <输出文件名> <扩容规则>
+resize_disk.sh <镜像来源> <输出文件> <扩容规则>
 ```
+
+### 参数说明
+
+| 参数 | 说明 |
+|------|------|
+| `镜像来源` | URL（http/https）或本地文件路径 |
+| `输出文件` | 输出镜像文件名（扩展名决定格式） |
+| `扩容规则` | 分区扩容规则（见下表） |
 
 ### 扩容规则
 
@@ -58,63 +30,40 @@ disk-expansion/
 |------|------|
 | `0` | 仅格式转换，不扩容 |
 | `2G` | 自动选择分区，扩容 2G |
-| `500M` | 自动选择分区，扩容 500M |
 | `+10%` | 自动选择分区，增加 10% |
 | `=10G` | 自动选择分区，增至 10G |
 | `/dev/sda2` | 指定分区填满剩余空间 |
-| `/dev/sda2+2G` | 分区增加 2G |
-| `/dev/sda2=10G` | 分区增至 10G |
-| `/dev/sda2+10%` | 分区增加 10% |
-| `/dev/vg_name/lv_name+2G` | LVM 逻辑卷增加 2G（自动调用 --LV-expand） |
+| `/dev/sda2+2G` | 指定分区增加 2G |
+| `/dev/sda2=10G` | 指定分区增至 10G |
+| `/dev/sda2+10%` | 指定分区增加 10% |
+| `/dev/vg/lv_root+2G` | LVM 逻辑卷增加 2G |
 | `/dev/sda1+100M,/dev/sda2` | 多分区调整（逗号分隔） |
 
-### 示例
+## 示例
 
 ```bash
-# 下载镜像并扩容 1G，输出为 raw 格式
-./resize_disk.sh https://example.com/image.img.gz output.img 1G
+# 从 URL 下载并扩容 5G
+resize_disk.sh https://example.com/image.img.gz output.qcow2 5G
 
-# 本地文件扩容 2G，输出为 qcow2 格式
-./resize_disk.sh ./local-image.img output.qcow2 2G
+# 本地镜像，指定分区扩容
+resize_disk.sh ./image.raw output.qcow2 /dev/sda2+10G
 
 # 仅格式转换
-./resize_disk.sh ./image.img output.qcow2 0
-
-# 指定分区扩容
-./resize_disk.sh ./image.img output.img /dev/sda2+5G
-
-# LVM 逻辑卷扩容
-./resize_disk.sh ./image.img output.img /dev/vg0/root+10G
-
-# 多分区组合调整
-./resize_disk.sh ./image.img output.img "/dev/sda1+200M,/dev/sda2"
+resize_disk.sh ./image.qcow2 output.raw 0
 ```
 
-### GitHub Actions
+## Docker 使用
 
-1. **Fork 此仓库**到你的 GitHub 账户
-2. **进入 Actions 标签页**，选择 "Resize Disk" 工作流
-3. **点击 "Run workflow"**，填写参数：
-   - 镜像来源（URL 或本地路径）
-   - 输出文件名
-   - 扩容规则
-4. **运行完成后**，从 Artifacts 下载处理后的镜像文件
+```bash
+docker build -t disk-expansion .
+docker run --rm -v $(pwd):/build disk-expansion <镜像来源> <输出文件> <扩容规则>
+```
 
-> ⚠️ 注意：GitHub Actions 的存储和运行时间有限，超大镜像建议本地执行。
+## 依赖
 
-### 环境依赖
-
-脚本运行需要以下工具：
-
-| 工具 | 包名（Ubuntu/Debian） | 包名（CentOS/RHEL） |
-|------|----------------------|---------------------|
-| qemu-img | qemu-utils | qemu-img |
-| virt-resize | libguestfs-tools | libguestfs-tools |
-| wget/unzip/xz/bzip2 | wget, unzip, xz-utils, bzip2 | wget, unzip, xz, bzip2 |
-| 7z（可选） | p7zip-full | p7zip |
-
-### 注意事项
-
-1. **安全优先**：扩容操作不会修改原始镜像，所有操作均在副本上进行
-2. **Windows 镜像**：扩容后首次启动可能会触发磁盘检查（chkdsk），属正常现象
-3. **LVM 镜像**：建议显式指定逻辑卷进行扩容，否则只扩容 PV 而 LV 不会自动扩展
+- `qemu-utils`
+- `libguestfs-tools`
+- `curl` / `wget`
+- `xz-utils` / `bzip2` / `zstd`
+- `unzip`
+- `numfmt`
