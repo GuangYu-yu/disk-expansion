@@ -197,10 +197,10 @@ get_image_virtual_size() {
     local image="${1}"
     local size
     size=$(qemu-img info --output=json "${image}" 2>/dev/null | \
-           sed -n 's/.*"virtual-size": \([0-9]*\).*/\1/p')
+           sed -n 's/.*"virtual-size": \([0-9]*\).*/\1/p' | head -n1)
     if [[ -z "${size}" ]]; then
         size=$(qemu-img info "${image}" 2>/dev/null | \
-               sed -n 's/.*virtual size: .*(\([0-9]*\) bytes).*/\1/p')
+               sed -n 's/.*virtual size: .*(\([0-9]*\) bytes).*/\1/p' | head -n1)
     fi
     echo "${size:-0}"
 }
