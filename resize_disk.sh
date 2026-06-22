@@ -150,6 +150,14 @@ get_format_from_ext() {
 }
 
 # ---------------------------------------------------------------------------
+# 字节大小格式化
+# ---------------------------------------------------------------------------
+format_bytes() {
+    local bytes="${1}"
+    awk "BEGIN{u=1024*1024; s=\"MB\"; if(${bytes}>=1024*1024*1024){u=1024*1024*1024; s=\"GB\"}; printf \"%.2f %s\", ${bytes}/u, s}"
+}
+
+# ---------------------------------------------------------------------------
 # 大小解析
 # ---------------------------------------------------------------------------
 parse_size_to_bytes() {
@@ -191,16 +199,6 @@ get_image_virtual_size() {
     size=$(qemu-img info "${image}" 2>/dev/null | \
            sed -n '/virtual size:/s/.*(\([0-9]*\) bytes).*/\1/p')
     echo "${size:-0}"
-}
-
-# ---------------------------------------------------------------------------
-# 获取镜像格式
-# ---------------------------------------------------------------------------
-get_image_format() {
-    local image="${1}"
-    local fmt
-    fmt=$(qemu-img info "${image}" 2>/dev/null | awk '/file format:/ {print $3}')
-    echo "${fmt:-raw}"
 }
 
 # ---------------------------------------------------------------------------
@@ -473,7 +471,7 @@ parse_resize_rules() {
                 local size_bytes
                 size_bytes=$(calc_expand_bytes "${operator}" "${size_spec}" "${current_bytes}")
                 expand_size_bytes=$((expand_size_bytes + size_bytes))
-                log_step "规则: ${label} ${partition} ${operator} ${size_spec} (+${size_bytes} 字节)"
+                log_step "规则: ${label} ${partition} ${operator} ${size_spec} (+$(format_bytes "${size_bytes}"))"
             else
                 # 纯设备路径，无操作符
                 local partition="${rule}"
@@ -498,30 +496,22 @@ parse_resize_rules() {
             [[ -n "${auto_partition}" ]] || continue
             expand_partition="${auto_partition}"
 
+            local size_bytes; local operator; local size_spec
             if [[ "${rule}" =~ ^[0-9]+[KMGTkmgt]?$ ]]; then
-                local size_bytes
                 size_bytes=$(parse_size_to_bytes "${rule}")
-                if [[ ${size_bytes} -gt 0 ]]; then
-                    log_step "规则: 自动选择分区 ${expand_partition}，扩容 ${rule}"
-                    auto_budget=$((auto_budget + size_bytes))
-                fi
+                [[ ${size_bytes} -gt 0 ]] || continue
             elif [[ "${rule}" =~ ^([+=])(.+)$ ]]; then
-                local operator="${BASH_REMATCH[1]}"
-                local size_spec="${BASH_REMATCH[2]}"
-                local size_bytes
-                if [[ "${size_spec}" =~ ^([0-9]+)%$ ]]; then
-                    local current_bytes
-                    current_bytes=$(get_partition_size_bytes "${fs_info}" "${col_name}" "${col_size}" "${expand_partition}")
-                    size_bytes=$(( current_bytes * ${BASH_REMATCH[1]} / 100 ))
-                else
-                    size_bytes=$(parse_size_to_bytes "${size_spec}")
-                fi
-                log_step "规则: 自动选择分区 ${expand_partition}，扩容 ${size_spec}"
-                auto_budget=$((auto_budget + size_bytes))
+                operator="${BASH_REMATCH[1]}"
+                size_spec="${BASH_REMATCH[2]}"
+                local current_bytes
+                current_bytes=$(get_partition_size_bytes "${fs_info}" "${col_name}" "${col_size}" "${expand_partition}")
+                size_bytes=$(calc_expand_bytes "${operator}" "${size_spec}" "${current_bytes}")
             else
                 log_error "无法解析规则 '${rule}'"
                 return 1
             fi
+            log_step "规则: 自动选择分区 ${expand_partition}，扩容 $(format_bytes "${size_bytes}")"
+            auto_budget=$((auto_budget + size_bytes))
         fi
     done
 
@@ -589,9 +579,9 @@ main() {
     log_info "扩容规则: ${RESIZE_RULE}"
 
     # ========== 仅格式转换分支 ==========
+    local tmp_raw="tmp_$$.raw"
     if [[ "${RESIZE_RULE}" == "0" ]]; then
         log_phase "仅格式转换"
-        local tmp_raw="tmp_$$.raw"
         CLEANUP_ITEMS+=("${tmp_raw}")
         fetch_input_image "${IMAGE_SOURCE}" "${tmp_raw}"
         log_step "转换格式..."
@@ -603,18 +593,18 @@ main() {
 
     # ========== 正常扩容流程 ==========
     log_phase "获取输入镜像"
-    local tmp_raw="tmp_$$.raw"
     CLEANUP_ITEMS+=("${tmp_raw}")
     fetch_input_image "${IMAGE_SOURCE}" "${tmp_raw}"
 
     log_step "验证镜像..."
-    if ! qemu-img info "${tmp_raw}" &>/dev/null; then
+    local qemu_info
+    qemu_info=$(qemu-img info "${tmp_raw}" 2>/dev/null) || {
         log_error "文件损坏或格式不支持"
         exit 1
-    fi
+    }
 
     local input_format
-    input_format=$(get_image_format "${tmp_raw}")
+    input_format=$(echo "${qemu_info}" | awk '/file format:/ {print $3}')
     log_info "输入格式: ${input_format}"
 
     # 获取真实大小
@@ -625,11 +615,7 @@ main() {
     else
         real_size=$(get_image_virtual_size "${tmp_raw}")
     fi
-    local unit="MB" divisor=$((1024 * 1024))
-    (( real_size >= 1024 * 1024 * 1024 )) && unit="GB" && divisor=$((1024 * 1024 * 1024))
-    local pretty_size
-    pretty_size=$(awk "BEGIN{printf \"%.2f\", ${real_size}/${divisor}}")
-    log_info "镜像大小: ${real_size} 字节 (${pretty_size} ${unit})"
+    log_info "镜像大小: ${real_size} 字节 ($(format_bytes "${real_size}"))"
 
     # 分析分区
     analyze_partitions "${tmp_raw}"
@@ -645,11 +631,11 @@ main() {
     { read -r expand_partition; read -r expand_size_bytes; read -r resize_opts; read -r lv_expand; read -r has_lvm; } <<< "${parsed}"
 
     log_info "扩容分区: ${expand_partition}"
-    log_info "扩容大小: ${expand_size_bytes} 字节"
+    log_info "扩容大小: $(format_bytes "${expand_size_bytes}")"
 
     # 计算总大小
     local -i total_size=$((real_size + expand_size_bytes))
-    log_info "输出总大小: ${total_size} 字节"
+    log_info "输出总大小: $(format_bytes "${total_size}")"
 
     # 创建输出镜像
     log_phase "创建输出镜像"
