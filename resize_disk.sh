@@ -12,15 +12,12 @@
 
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 
 # ---------------------------------------------------------------------------
 # 常量定义
 # ---------------------------------------------------------------------------
 readonly ALIGNMENT=$((64 * 1024))                # 64K 对齐
-readonly MIN_ROOT_SIZE=$((100 * 1024 * 1024))    # 100MB
-readonly MIN_FALLBACK_SIZE=$((50 * 1024 * 1024)) # 50MB
 
 # ---------------------------------------------------------------------------
 # 全局状态
@@ -92,10 +89,10 @@ Disk Expansion Tool - 虚拟磁盘镜像扩容工具
   +10%                      自动选择分区，增加 10%
   =10G                      自动选择分区，增至 10G
   /dev/sda2                 指定分区填满剩余空间
-  /dev/sda2+2G              指定分区增加 2G
+  /dev/sda2+2G              指定分区扩容 2G
   /dev/sda2=10G             指定分区增至 10G
   /dev/sda2+10%             指定分区增加 10%
-  /dev/vg/lv_root+2G        LVM 逻辑卷增加 2G
+  /dev/vg/lv_root+2G        LVM 逻辑卷扩容 2G
   /dev/sda1+100M,/dev/sda2  多分区调整（逗号分隔）
 
 支持的输入压缩格式:
@@ -150,11 +147,6 @@ get_format_from_ext() {
         hdd) echo "parallels" ;;
         *) echo "" ;;
     esac
-}
-
-is_valid_image_ext() {
-    local filename="${1}"
-    [[ -n "$(get_format_from_ext "${filename}")" ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -272,11 +264,7 @@ _fetch_local() {
         *)
             # 未压缩文件：CoW 复制（不占用额外空间），失败则普通复制
             # 注意：不使用硬链接，避免 fallocate --dig-holes 破坏原文件
-            if cp --reflink=auto "${path}" "${tmp_raw}" 2>/dev/null; then
-                : # CoW 复制成功（Btrfs/ZFS 等）
-            else
-                cp "${path}" "${tmp_raw}"
-            fi
+            cp --reflink=auto "${path}" "${tmp_raw}" 2>/dev/null || cp "${path}" "${tmp_raw}"
             ;;
     esac
 }
@@ -296,18 +284,16 @@ _decompress_stream() {
 _find_image_in_dir() {
     local dir="${1}"
     local out="${2}"
-    local found
-    found=$(find "${dir}" -maxdepth 2 -type f \( \
+    local all_files count found
+    all_files=$(find "${dir}" -maxdepth 2 -type f \( \
         -name "*.raw" -o -name "*.img" -o -name "*.qcow2" -o \
-        -name "*.vmdk" -o -name "*.vdi" \) | head -1)
+        -name "*.vmdk" -o -name "*.vdi" \))
+    found=$(echo "${all_files}" | head -1)
     if [[ -z "${found}" ]]; then
         log_error "在解压目录中未找到镜像文件"
         exit 1
     fi
-    local count
-    count=$(find "${dir}" -maxdepth 2 -type f \( \
-        -name "*.raw" -o -name "*.img" -o -name "*.qcow2" -o \
-        -name "*.vmdk" -o -name "*.vdi" \) | wc -l)
+    count=$(echo "${all_files}" | wc -l)
     if [[ ${count} -gt 1 ]]; then
         log_warn "找到 ${count} 个镜像文件，使用第一个: $(basename "${found}")"
     fi
@@ -341,15 +327,7 @@ analyze_partitions() {
 # ---------------------------------------------------------------------------
 detect_lvm() {
     local image="${1}"
-    local lv_list
-    lv_list=$(virt-filesystems -a "${image}" --lvs 2>/dev/null)
-    if [[ -n "${lv_list}" ]]; then
-        echo "true"
-        echo "${lv_list}"
-    else
-        echo "false"
-        echo ""
-    fi
+    virt-filesystems -a "${image}" --lvs 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
@@ -369,8 +347,9 @@ get_partition_size_bytes() {
 # 计算扩容字节数（64K 对齐）
 # ---------------------------------------------------------------------------
 calc_expand_bytes() {
-    local size_spec="${1}"
-    local current_bytes="${2}"
+    local operator="${1}"
+    local size_spec="${2}"
+    local current_bytes="${3}"
     local expand_bytes=0
 
     if [[ "${size_spec}" =~ ^([0-9]+)%$ ]]; then
@@ -379,10 +358,11 @@ calc_expand_bytes() {
     else
         local target_bytes
         target_bytes=$(parse_size_to_bytes "${size_spec}")
-        # 确保 target_bytes 是纯数字（百分比已被上面处理）
         if [[ "${target_bytes}" =~ ^[0-9]+$ ]]; then
-            if [[ ${target_bytes} -gt ${current_bytes} ]]; then
-                expand_bytes=$(( target_bytes - current_bytes ))
+            if [[ "${operator}" == "+" ]]; then
+                expand_bytes=${target_bytes}
+            elif [[ "${operator}" == "=" ]]; then
+                [[ ${target_bytes} -gt ${current_bytes} ]] && expand_bytes=$(( target_bytes - current_bytes ))
             fi
         fi
     fi
@@ -397,7 +377,7 @@ calc_expand_bytes() {
 is_lv() {
     local name="${1}"
     local lv_list="${2}"
-    [[ -n "${lv_list}" ]] && echo "${lv_list}" | awk '{print $1}' | grep -Fxq "${name}"
+    [[ -n "${lv_list}" ]] && echo "${lv_list}" | grep -qF "${name}"
 }
 
 # ---------------------------------------------------------------------------
@@ -428,6 +408,15 @@ find_expand_partition() {
 }
 
 # ---------------------------------------------------------------------------
+# 获取表头列索引
+# ---------------------------------------------------------------------------
+get_col_index() {
+    local header="${1}"
+    local col_name="${2}"
+    echo "${header}" | awk -v name="${col_name}" '{for(i=1;i<=NF;i++) if($i==name) print i}'
+}
+
+# ---------------------------------------------------------------------------
 # 解析扩容规则
 # ---------------------------------------------------------------------------
 parse_resize_rules() {
@@ -439,20 +428,19 @@ parse_resize_rules() {
 
     fs_info=$(virt-filesystems -a "${image}" -l 2>/dev/null)
     header=$(echo "${fs_info}" | head -n1)
-    col_name=$(echo "${header}" | awk '{for(i=1;i<=NF;i++) if($i=="Name") print i}')
-    col_size=$(echo "${header}" | awk '{for(i=1;i<=NF;i++) if($i=="Size") print i}')
+    col_name=$(get_col_index "${header}" "Name")
+    col_size=$(get_col_index "${header}" "Size")
 
     local lv_list=""
     local has_lvm="false"
-    local lvm_info
-    lvm_info=$(detect_lvm "${image}")
-    has_lvm=$(echo "${lvm_info}" | head -n1)
-    lv_list=$(echo "${lvm_info}" | tail -n +2)
+    lv_list=$(detect_lvm "${image}")
+    [[ -n "${lv_list}" ]] && has_lvm="true"
 
     local resize_opts=""
     local expand_partition=""
     local lv_expand=""
     local -i expand_size_bytes=0
+    local -i auto_budget=0
 
     local -a rules
     IFS=',' read -ra rules <<< "${rule_str}"
@@ -474,25 +462,18 @@ parse_resize_rules() {
                 if is_lv "${partition}" "${lv_list}"; then
                     [[ -n "${expand_partition}" ]] || expand_partition=$(find_expand_partition "${image}")
                     lv_expand="${partition}"
-                    local current_bytes
-                    current_bytes=$(get_partition_size_bytes "${fs_info}" "${col_name}" "${col_size}" "${partition}")
-                    local size_bytes
-                    size_bytes=$(calc_expand_bytes "${size_spec}" "${current_bytes}")
-                    expand_size_bytes=$((expand_size_bytes + size_bytes))
-                    log_step "规则: LV ${partition} ${operator} ${size_spec} (+${size_bytes} 字节)"
+                    local label="LV"
                 else
-                    if [[ "${operator}" == "+" ]]; then
-                        resize_opts="${resize_opts} --resize ${partition}=+${size_spec}"
-                    else
-                        resize_opts="${resize_opts} --resize ${partition}=${size_spec}"
-                    fi
-                    local current_bytes
-                    current_bytes=$(get_partition_size_bytes "${fs_info}" "${col_name}" "${col_size}" "${partition}")
-                    local size_bytes
-                    size_bytes=$(calc_expand_bytes "${size_spec}" "${current_bytes}")
-                    expand_size_bytes=$((expand_size_bytes + size_bytes))
-                    log_step "规则: 分区 ${partition} ${operator} ${size_spec} (+${size_bytes} 字节)"
+                    local flag="+"; [[ "${operator}" == "=" ]] && flag=""
+                    resize_opts="${resize_opts} --resize ${partition}=${flag}${size_spec}"
+                    local label="分区"
                 fi
+                local current_bytes
+                current_bytes=$(get_partition_size_bytes "${fs_info}" "${col_name}" "${col_size}" "${partition}")
+                local size_bytes
+                size_bytes=$(calc_expand_bytes "${operator}" "${size_spec}" "${current_bytes}")
+                expand_size_bytes=$((expand_size_bytes + size_bytes))
+                log_step "规则: ${label} ${partition} ${operator} ${size_spec} (+${size_bytes} 字节)"
             else
                 # 纯设备路径，无操作符
                 local partition="${rule}"
@@ -512,34 +493,31 @@ parse_resize_rules() {
             fi
         else
             # 非设备路径规则（自动选择）
+            local auto_partition
+            auto_partition=$(find_expand_partition "${image}")
+            [[ -n "${auto_partition}" ]] || continue
+            expand_partition="${auto_partition}"
+
             if [[ "${rule}" =~ ^[0-9]+[KMGTkmgt]?$ ]]; then
                 local size_bytes
                 size_bytes=$(parse_size_to_bytes "${rule}")
                 if [[ ${size_bytes} -gt 0 ]]; then
-                    expand_partition=$(find_expand_partition "${image}")
-                    if [[ -n "${expand_partition}" ]]; then
-                        log_step "规则: 自动选择分区 ${expand_partition}，扩容 ${rule}"
-                        expand_size_bytes=$((expand_size_bytes + size_bytes))
-                    fi
+                    log_step "规则: 自动选择分区 ${expand_partition}，扩容 ${rule}"
+                    auto_budget=$((auto_budget + size_bytes))
                 fi
             elif [[ "${rule}" =~ ^([+=])(.+)$ ]]; then
                 local operator="${BASH_REMATCH[1]}"
                 local size_spec="${BASH_REMATCH[2]}"
-                expand_partition=$(find_expand_partition "${image}")
-                if [[ -n "${expand_partition}" ]]; then
+                local size_bytes
+                if [[ "${size_spec}" =~ ^([0-9]+)%$ ]]; then
                     local current_bytes
                     current_bytes=$(get_partition_size_bytes "${fs_info}" "${col_name}" "${col_size}" "${expand_partition}")
-                    local size_bytes
-                    size_bytes=$(calc_expand_bytes "${size_spec}" "${current_bytes}")
-                    if [[ "${operator}" == "+" ]]; then
-                        resize_opts="${resize_opts} --resize ${expand_partition}=+${size_spec}"
-                        log_step "规则: 自动选择分区 ${expand_partition}，增加 ${size_spec}"
-                    else
-                        resize_opts="${resize_opts} --resize ${expand_partition}=${size_spec}"
-                        log_step "规则: 自动选择分区 ${expand_partition}，增至 ${size_spec}"
-                    fi
-                    expand_size_bytes=$((expand_size_bytes + size_bytes))
+                    size_bytes=$(( current_bytes * ${BASH_REMATCH[1]} / 100 ))
+                else
+                    size_bytes=$(parse_size_to_bytes "${size_spec}")
                 fi
+                log_step "规则: 自动选择分区 ${expand_partition}，扩容 ${size_spec}"
+                auto_budget=$((auto_budget + size_bytes))
             else
                 log_error "无法解析规则 '${rule}'"
                 return 1
@@ -547,13 +525,22 @@ parse_resize_rules() {
         fi
     done
 
+    # 总预算 >0 时，以总预算为最终扩容大小
+    if [[ ${auto_budget} -gt 0 ]]; then
+        expand_size_bytes=${auto_budget}
+    fi
+
     # 验证
-    if [[ -z "${expand_partition}" ]]; then
+    if [[ -z "${expand_partition}" && -z "${resize_opts}" ]]; then
         log_error "无法确定要扩容的分区"
         return 1
     fi
     if [[ ${expand_size_bytes} -eq 0 ]]; then
-        log_error "没有指定有效的扩容大小"
+        if [[ -n "${lv_expand}" ]]; then
+            log_error "LV '${lv_expand}' 需配合扩容大小使用"
+        else
+            log_error "没有指定有效的扩容大小"
+        fi
         return 1
     fi
 
@@ -575,8 +562,8 @@ get_swap_partitions() {
 
     fs_info=$(virt-filesystems -a "${image}" -l 2>/dev/null)
     header=$(echo "${fs_info}" | head -n1)
-    col_name=$(echo "${header}" | awk '{for(i=1;i<=NF;i++) if($i=="Name") print i}')
-    col_vfs=$(echo "${header}" | awk '{for(i=1;i<=NF;i++) if($i=="VFS") print i}')
+    col_name=$(get_col_index "${header}" "Name")
+    col_vfs=$(get_col_index "${header}" "VFS")
 
     echo "${fs_info}" | awk -v nc="${col_name}" -v vc="${col_vfs}" -v ep="${expand_part}" '
         NR>1 && $vc == "swap" && $nc != ep {print $nc}
@@ -638,7 +625,11 @@ main() {
     else
         real_size=$(get_image_virtual_size "${tmp_raw}")
     fi
-    log_info "镜像大小: ${real_size} 字节 ($((real_size / 1024 / 1024 / 1024)) GB)"
+    local unit="MB" divisor=$((1024 * 1024))
+    (( real_size >= 1024 * 1024 * 1024 )) && unit="GB" && divisor=$((1024 * 1024 * 1024))
+    local pretty_size
+    pretty_size=$(awk "BEGIN{printf \"%.2f\", ${real_size}/${divisor}}")
+    log_info "镜像大小: ${real_size} 字节 (${pretty_size} ${unit})"
 
     # 分析分区
     analyze_partitions "${tmp_raw}"
@@ -650,11 +641,8 @@ main() {
         log_error "扩容规则解析失败"
         exit 1
     fi
-    local expand_partition="$(echo "${parsed}" | sed -n '1p')"
-    local expand_size_bytes="$(echo "${parsed}" | sed -n '2p')"
-    local resize_opts="$(echo "${parsed}" | sed -n '3p')"
-    local lv_expand="$(echo "${parsed}" | sed -n '4p')"
-    local has_lvm="$(echo "${parsed}" | sed -n '5p')"
+    local expand_partition; local expand_size_bytes; local resize_opts; local lv_expand; local has_lvm
+    { read -r expand_partition; read -r expand_size_bytes; read -r resize_opts; read -r lv_expand; read -r has_lvm; } <<< "${parsed}"
 
     log_info "扩容分区: ${expand_partition}"
     log_info "扩容大小: ${expand_size_bytes} 字节"
@@ -674,7 +662,7 @@ main() {
 
     # 组装 virt-resize 命令
     log_phase "执行扩容"
-    local resize_cmd="virt-resize --expand ${expand_partition}"
+    local resize_cmd="virt-resize${expand_partition:+ --expand ${expand_partition}}"
     [[ -n "${resize_opts}" ]] && resize_cmd="${resize_cmd} ${resize_opts}"
 
     # 忽略 swap 分区
