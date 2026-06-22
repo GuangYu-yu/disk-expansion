@@ -44,6 +44,7 @@ jobs:
       - name: 执行扩容
         run: |
           chmod +x ./resize_disk.sh
+          sed -i 's/\r$//' resize_disk.sh
           sudo ./resize_disk.sh "${{ github.event.inputs.image_url }}" "${{ github.event.inputs.output_filename }}" "${{ github.event.inputs.resize_rule }}"
           ls -lah
 
