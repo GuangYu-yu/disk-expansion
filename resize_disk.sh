@@ -197,10 +197,11 @@ get_image_virtual_size() {
     local image="${1}"
     local size
     size=$(qemu-img info --output=json "${image}" 2>/dev/null | \
-           sed -n 's/.*"virtual-size": \([0-9]*\).*/\1/p' | head -n1)
+           sed -n 's/.*"virtual-size":[[:space:]]*\([0-9]*\).*/\1/p')
+    # 文本模式回退
     if [[ -z "${size}" ]]; then
         size=$(qemu-img info "${image}" 2>/dev/null | \
-               sed -n 's/.*virtual size: .*(\([0-9]*\) bytes).*/\1/p' | head -n1)
+               sed -n 's/.*virtual size: .*(\([0-9]*\) bytes).*/\1/p')
     fi
     echo "${size:-0}"
 }
@@ -635,6 +636,9 @@ main() {
     log_info "输入格式: ${input_format}"
 
     # 获取真实大小
+    if [[ "${input_format}" != "raw" ]]; then
+        log_info "qemu-img info JSON: $(qemu-img info --output=json "${tmp_raw}" 2>/dev/null)"
+    fi
     local real_size
     if [[ "${input_format}" == "raw" ]]; then
         sparsify_raw "${tmp_raw}"
