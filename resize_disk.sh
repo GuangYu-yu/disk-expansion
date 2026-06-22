@@ -233,7 +233,7 @@ _fetch_remote() {
             _find_image_in_dir "${extract_dir}" "${tmp_raw}"
             ;;
         *)
-            curl -sL --retry 3 --retry-delay 5 "${url}" | _decompress_stream "${url}" "" > "${tmp_raw}"
+            curl -sLf --retry 3 --retry-delay 5 "${url}" | _decompress_stream "${url}" "" > "${tmp_raw}"
             ;;
     esac
 }
