@@ -584,8 +584,14 @@ main() {
         log_phase "仅格式转换"
         CLEANUP_ITEMS+=("${tmp_raw}")
         fetch_input_image "${IMAGE_SOURCE}" "${tmp_raw}"
+        sparsify_raw "${tmp_raw}"
         log_step "转换格式..."
         qemu-img convert -O "${output_format}" "${tmp_raw}" "${OUTPUT_FILENAME}"
+        if [[ "${output_format}" == "raw" ]]; then
+            local tar_archive="${OUTPUT_FILENAME}.tar.gz"
+            log_step "打包稀疏 tar: ${tar_archive}"
+            tar -Scf "${tar_archive}" "${OUTPUT_FILENAME}"
+        fi
         BUILD_SUCCESS=1
         log_info "格式转换完成: ${OUTPUT_FILENAME}"
         exit 0
@@ -595,6 +601,7 @@ main() {
     log_phase "获取输入镜像"
     CLEANUP_ITEMS+=("${tmp_raw}")
     fetch_input_image "${IMAGE_SOURCE}" "${tmp_raw}"
+    sparsify_raw "${tmp_raw}"
 
     log_step "验证镜像..."
     local qemu_info
@@ -607,14 +614,9 @@ main() {
     input_format=$(echo "${qemu_info}" | awk '/file format:/ {print $3}')
     log_info "输入格式: ${input_format}"
 
-    # 获取真实大小
+    # 获取虚拟大小
     local real_size
-    if [[ "${input_format}" == "raw" ]]; then
-        sparsify_raw "${tmp_raw}"
-        real_size=$(stat -c %s "${tmp_raw}")
-    else
-        real_size=$(get_image_virtual_size "${tmp_raw}")
-    fi
+    real_size=$(get_image_virtual_size "${tmp_raw}")
     log_info "镜像大小: ${real_size} 字节 ($(format_bytes "${real_size}"))"
 
     # 分析分区
@@ -675,10 +677,20 @@ main() {
     log_step "执行: ${resize_cmd}"
     ${resize_cmd} "${tmp_raw}" "${OUTPUT_FILENAME}"
 
+    # raw 格式额外打包 sparse tar，保留空洞信息
+    if [[ "${output_format}" == "raw" ]]; then
+        local tar_archive="${OUTPUT_FILENAME}.tar.gz"
+        log_step "打包稀疏 tar: ${tar_archive}"
+        tar -Scf "${tar_archive}" "${OUTPUT_FILENAME}"
+    fi
+
     BUILD_SUCCESS=1
     log_phase "完成"
+    local out_virt out_phys
+    out_virt=$(get_image_virtual_size "${OUTPUT_FILENAME}")
+    out_phys=$(stat -c %s "${OUTPUT_FILENAME}" 2>/dev/null || echo 0)
     log_info "输出文件: ${OUTPUT_FILENAME}"
-    log_info "文件大小: $(du -h "${OUTPUT_FILENAME}" | awk '{print $1}')"
+    log_info "逻辑: $(format_bytes "${out_virt}")，物理: $(format_bytes "${out_phys}")"
 }
 
 main "$@"
