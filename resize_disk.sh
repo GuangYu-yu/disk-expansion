@@ -251,6 +251,11 @@ _fetch_local() {
     log_step "使用本地文件: ${path}"
 
     case "${path}" in
+        *.tar.gz|*.tar.xz|*.tar.bz2|*.tar.zst|*.tgz)
+            CLEANUP_ITEMS+=("${extract_dir}")
+            tar -xf "${path}" -C "${extract_dir}"
+            _find_image_in_dir "${extract_dir}" "${tmp_raw}"
+            ;;
         *.zip)
             CLEANUP_ITEMS+=("${extract_dir}")
             unzip -o "${path}" -d "${extract_dir}"
