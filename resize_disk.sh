@@ -686,11 +686,10 @@ main() {
 
     BUILD_SUCCESS=1
     log_phase "完成"
-    local out_virt out_phys
+    local out_virt
     out_virt=$(get_image_virtual_size "${OUTPUT_FILENAME}")
-    out_phys=$(stat -c %s "${OUTPUT_FILENAME}" 2>/dev/null || echo 0)
     log_info "输出文件: ${OUTPUT_FILENAME}"
-    log_info "逻辑: $(format_bytes "${out_virt}")，物理: $(format_bytes "${out_phys}")"
+    log_info "逻辑: $(format_bytes "${out_virt}")，物理: $(du -sh "${OUTPUT_FILENAME}" | awk '{print $1}')B"
 }
 
 main "$@"
